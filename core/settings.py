@@ -217,13 +217,16 @@ REST_FRAMEWORK = {
 }
 
 
-EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
 
 ANYMAIL = {
-    "BREVO_API_KEY": os.environ.get("BREVO_API_KEY"),
+    "RESEND_API_KEY": os.environ.get("RESEND_API_KEY"),
 }
 
-DEFAULT_FROM_EMAIL = "tickets@outly.app"
+# onboarding@resend.dev is Resend's shared test sender — works instantly with
+# no domain verification. Once outly.ae is verified in Resend, switch this to
+# tickets@outly.ae (no other code change needed).
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "onboarding@resend.dev")
 
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000")
 
