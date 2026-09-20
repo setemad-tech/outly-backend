@@ -35,9 +35,9 @@ class CreateCheckoutSessionView(APIView):
                 user=request.user, event_id=event_id, quantity=quantity
             )
         except SoldOutError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_409_CONFLICT)
+            return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)
         except ValidationError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
         raw_success_url = request.data.get(
             "success_url", "https://outly.app/tickets/pending"
@@ -63,7 +63,7 @@ class CreateCheckoutSessionView(APIView):
             # Release the spot we just held — don't leave a PENDING
             # booking sitting around for a checkout that can never happen.
             booking.delete()
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
         except stripe.error.StripeError as e:
             # A genuine Stripe API failure — bad/placeholder API key,
             # amount below Stripe's per-currency minimum, account issue,

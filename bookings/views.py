@@ -62,9 +62,9 @@ class CreateFreeBookingView(APIView):
                 quantity=int(request.data.get("quantity", 1)),
             )
         except SoldOutError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_409_CONFLICT)
+            return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)
         except ValidationError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
         if booking.event.price_minor > 0:
             booking.delete()  # undo the hold — this endpoint isn't for paid events

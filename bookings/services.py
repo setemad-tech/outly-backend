@@ -30,6 +30,16 @@ def create_pending_booking(*, user, event_id: str, quantity: int = 1) -> Booking
     a plain "if event.spots_left >= quantity" check without the lock is not
     safe under concurrency.
     """
+    if not user.email_verified:
+        # The real enforcement point: QR tickets go out by email
+        # (bookings/emails.py), so no booking should ever be created for an
+        # unconfirmed address, regardless of what the frontend gate did or
+        # didn't check. Checked before the row lock below — no reason to
+        # take it just to reject the request anyway.
+        raise ValidationError(
+            "Verify your email before booking — check your inbox for the code."
+        )
+
     event = Event.objects.select_for_update().get(pk=event_id)
 
     if event.status != Event.Status.PUBLISHED:

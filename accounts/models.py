@@ -64,6 +64,13 @@ class User(AbstractUser):
     preferred_language = models.CharField(max_length=10, default="en")
     city = models.CharField(max_length=80, blank=True)  # "Dubai" today
 
+    # False for every account, including ones that existed before this
+    # field was added — QR tickets go out by email, so an unconfirmed
+    # address (typo'd at signup) must never be trusted just because the
+    # account is old. Everyone proves their email once via the OTP flow
+    # (see accounts/otp.py) before they can book.
+    email_verified = models.BooleanField(default=False)
+
     def save(self, *args, **kwargs):
         # AbstractUser still requires a unique username internally even
         # though we don't collect one at signup — derive a stable one from
@@ -112,3 +119,25 @@ class OrganizerProfile(models.Model):
 
     def __str__(self):
         return self.display_name
+
+
+class EmailOTP(models.Model):
+    """
+    One active verification code per user. A new send overwrites the
+    previous row (OneToOne + update_or_create in accounts/otp.py) rather
+    than accumulating history — only the latest code should ever work, so
+    there's nothing worth keeping once it's replaced or used.
+    """
+    user = models.OneToOneField(
+        "accounts.User", on_delete=models.CASCADE, related_name="email_otp"
+    )
+    # Hashed with Django's password hasher (same as User.password), never
+    # stored in plaintext — a DB read alone shouldn't be enough to verify
+    # someone else's email.
+    code_hash = models.CharField(max_length=128)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"OTP for {self.user.email}"

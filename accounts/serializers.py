@@ -39,9 +39,9 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "name", "email", "phone_number", "city",
-            "preferred_language", "organizer",
+            "preferred_language", "organizer", "email_verified",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = ["id", "email_verified"]
 
     def get_organizer(self, user):
         profile = getattr(user, "organizer_profile", None)

@@ -6,16 +6,20 @@ register, getProfile, changeEmail, changePassword, logout, organizer
 settings, and Stripe Connect onboarding.
 """
 
+import logging
+
 import stripe
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import Http404
+from django.utils import timezone
 from rest_framework import generics, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import OrganizerProfile
+from .otp import OTP_RESEND_COOLDOWN_SECONDS, OtpError, generate_and_send_otp, verify_otp
 from .serializers import (
     ProfileSerializer,
     OrganizerProfileSerializer,
@@ -24,6 +28,8 @@ from .serializers import (
     ChangePasswordSerializer,
     OrganizerSettingsSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 # Set independently here rather than relying on payments/services.py having
 # already run — module-level side effects like this shouldn't depend on
@@ -46,6 +52,15 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+
+        # Best-effort: a Brevo hiccup shouldn't fail the whole signup and
+        # strand someone with no account — they can hit /auth/otp/send/ to
+        # retry once they're signed in. email_verified simply stays False
+        # either way, and bookings/services.py refuses to book until it's True.
+        try:
+            generate_and_send_otp(user)
+        except Exception:
+            logger.exception("Failed to send signup verification email to %s", user.email)
 
         refresh = RefreshToken.for_user(user)
         return Response(
@@ -75,7 +90,17 @@ class ChangeEmailView(APIView):
         serializer = ChangeEmailSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         request.user.email = serializer.validated_data["email"]
-        request.user.save(update_fields=["email"])
+        # A changed email is an unverified one until proven otherwise —
+        # the old address's verification says nothing about the new one,
+        # and QR tickets go wherever `email` currently points.
+        request.user.email_verified = False
+        request.user.save(update_fields=["email", "email_verified"])
+
+        try:
+            generate_and_send_otp(request.user)
+        except Exception:
+            logger.exception("Failed to send verification email to %s", request.user.email)
+
         return Response(ProfileSerializer(request.user).data)
 
 
@@ -95,6 +120,64 @@ class ChangePasswordView(APIView):
         request.user.set_password(serializer.validated_data["new_password"])
         request.user.save(update_fields=["password"])
         return Response({"detail": "Password updated."})
+
+
+class SendEmailOtpView(APIView):
+    """
+    POST /api/auth/otp/send/
+    (Re)sends a verification code to request.user's current email. Used
+    both for "code didn't arrive, resend" and as the entry point the
+    frontend calls when it discovers an unverified account (e.g. logging
+    back in without ever having verified).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.email_verified:
+            return Response({"detail": "Email already verified."})
+
+        existing = getattr(user, "email_otp", None)
+        if existing is not None:
+            elapsed = (timezone.now() - existing.created_at).total_seconds()
+            if elapsed < OTP_RESEND_COOLDOWN_SECONDS:
+                wait = int(OTP_RESEND_COOLDOWN_SECONDS - elapsed)
+                return Response(
+                    {"detail": f"Please wait {wait}s before requesting another code."},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+        try:
+            generate_and_send_otp(user)
+        except Exception:
+            logger.exception("Failed to send OTP email to %s", user.email)
+            return Response(
+                {"detail": "Couldn't send the verification email. Try again shortly."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"detail": "Verification code sent."})
+
+
+class VerifyEmailOtpView(APIView):
+    """POST /api/auth/otp/verify/ — body: {"code": "123456"}"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if user.email_verified:
+            return Response(ProfileSerializer(user).data)
+
+        code = str(request.data.get("code", "")).strip()
+        if not code:
+            return Response({"detail": "Code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            verify_otp(user, code)
+        except OtpError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ProfileSerializer(user).data)
 
 
 class ApplyOrganizerView(APIView):
