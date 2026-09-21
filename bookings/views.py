@@ -206,6 +206,17 @@ class CheckInView(APIView):
         if booking.event.organizer_id != request.user.organizer_profile.id:
             return Response({"detail": "This ticket isn't for one of your events."}, status=403)
 
+        # Optional — the frontend now scans from inside a specific event's
+        # check-in screen (not a generic scan-anything button), and passes
+        # that event's id so a ticket for a *different* one of this
+        # organizer's events is rejected here rather than silently accepted.
+        event_id = request.data.get("event_id")
+        if event_id and str(booking.event_id) != str(event_id):
+            return Response(
+                {"detail": f"This ticket is for a different event ({booking.event.title})."},
+                status=400,
+            )
+
         if booking.status == Booking.Status.ATTENDED:
             return Response(
                 {
