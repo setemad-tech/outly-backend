@@ -224,11 +224,23 @@ ANYMAIL = {
 }
 
 # onboarding@resend.dev is Resend's shared test sender — works instantly with
-# no domain verification. Once outly.ae is verified in Resend, switch this to
-# tickets@outly.ae (no other code change needed).
+# no domain verification but can only email your own Resend account address.
+# Once a domain is verified in Resend, both of these can point at real
+# addresses on it (they don't need to be the same address, or receivable
+# mailboxes — domain verification authorizes the whole domain to send).
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "onboarding@resend.dev")
 
-SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000")
+# Ticket confirmation emails (bookings/emails.py) use this instead of
+# DEFAULT_FROM_EMAIL, so account/OTP mail and ticket mail can come from
+# different addresses. Falls back to DEFAULT_FROM_EMAIL if unset.
+TICKETS_FROM_EMAIL = os.environ.get("TICKETS_FROM_EMAIL", DEFAULT_FROM_EMAIL)
+
+# Used to build the QR ticket image URL embedded in confirmation emails
+# (bookings/emails.py) — must be the real, publicly-reachable API domain,
+# not localhost, or the QR image in the email is just unreachable/broken
+# for every recipient. Set SITE_URL on Render explicitly rather than relying
+# on this fallback.
+SITE_URL = os.environ.get("SITE_URL", "https://api.outly.ae")
 
 
 # ---------------------------------------------------------------------

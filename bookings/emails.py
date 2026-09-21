@@ -60,6 +60,11 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
 def send_ticket_email(booking: Booking) -> None:
     subject, text_body, html_body = build_ticket_email_content(booking)
 
-    email = EmailMultiAlternatives(subject=subject, body=text_body, to=[booking.user.email])
+    email = EmailMultiAlternatives(
+        subject=subject,
+        body=text_body,
+        to=[booking.user.email],
+        from_email=settings.TICKETS_FROM_EMAIL,
+    )
     email.attach_alternative(html_body, "text/html")
     email.send(fail_silently=False)

@@ -50,6 +50,12 @@ class CreateFreeBookingView(APIView):
     For price_minor == 0 events only — confirms immediately, no Stripe
     involved. Explicitly rejects paid events rather than silently letting
     someone attend for free by hitting the wrong endpoint.
+
+    TEMP (Stripe checkout not wired up yet): the paid-event rejection below
+    is commented out, and tickets-store.tsx on the frontend routes ALL
+    bookings here instead of to the checkout endpoint, so booking a paid
+    event also confirms instantly with no payment step. Restore both sides
+    together once Stripe checkout actually works end-to-end.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -66,12 +72,13 @@ class CreateFreeBookingView(APIView):
         except ValidationError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
-        if booking.event.price_minor > 0:
-            booking.delete()  # undo the hold — this endpoint isn't for paid events
-            return Response(
-                {"detail": "This event isn't free. Use the checkout endpoint."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # TEMP: see class docstring — re-enable once Stripe checkout works.
+        # if booking.event.price_minor > 0:
+        #     booking.delete()  # undo the hold — this endpoint isn't for paid events
+        #     return Response(
+        #         {"detail": "This event isn't free. Use the checkout endpoint."},
+        #         status=status.HTTP_400_BAD_REQUEST,
+        #     )
 
         booking.status = Booking.Status.CONFIRMED
         booking.save(update_fields=["status"])
