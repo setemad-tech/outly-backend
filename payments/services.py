@@ -55,7 +55,15 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
             "price_data": {
                 "currency": booking.event.currency.lower(),
                 "unit_amount": booking.event.price_minor,
-                "product_data": {"name": booking.event.title},
+                "product_data": {
+                    "name": booking.event.title,
+                    # Entry requirements on the payment page too (T&C §5.5).
+                    **(
+                        {"description": f"Entry: {booking.event.entry_requirements_display}"}
+                        if booking.event.entry_requirements_display
+                        else {}
+                    ),
+                },
             },
             "quantity": booking.quantity,
         }],

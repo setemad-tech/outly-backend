@@ -14,6 +14,7 @@ so you can preview the real content without sending anything.
 """
 
 from django.conf import settings
+from django.utils.html import escape
 from django.core.mail import EmailMultiAlternatives
 
 from .models import Booking
@@ -39,6 +40,14 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
     )
     admits_text = f"Admits {booking.quantity} people\n" if extra else ""
 
+    requirements = event.entry_requirements_display
+    requirements_html = (
+        f'<p style="margin: 0 0 20px; font-size: 14px;">Entry requirements: '
+        f"<strong>{escape(requirements)}</strong></p>"
+        if requirements else ""
+    )
+    requirements_text = f"Entry requirements: {requirements}\n" if requirements else ""
+
     html_body = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 480px; margin: 0 auto; color: #111;">
       <p style="letter-spacing: 3px; font-weight: 800; font-size: 13px; margin-bottom: 4px;">OUTLY</p>
@@ -48,6 +57,7 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
       <p style="margin: 0 0 20px; font-size: 14px;">
         Payment confirmed: <strong>{amount_display}</strong>
       </p>
+      {requirements_html}
       <img src="{qr_url}" alt="Your ticket QR code" width="220" height="220" style="display:block;" />
       <p style="margin: 16px 0 0; font-size: 14px; font-weight: 600;">Ticket for</p>
       <p style="margin: 2px 0 0; font-size: 14px; color: #666;">{holder_display}</p>
@@ -62,6 +72,7 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
         f"Your ticket for {event.title}\n"
         f"{event.venue_name} — {when_display}\n"
         f"Payment confirmed: {amount_display}\n"
+        f"{requirements_text}"
         f"Ticket for: {holder_display}\n"
         f"{admits_text}"
         f"Booking reference: {reference}\n"

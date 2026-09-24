@@ -74,6 +74,12 @@ class Event(models.Model):
     currency = models.CharField(max_length=3, default="AED")
 
     capacity = models.PositiveIntegerField()
+
+    # Admission criteria (T&C §5.5: must be shown on the listing and at
+    # checkout). null = all ages. entry_restrictions is the organizer's own
+    # wording for anything else, e.g. "Women only · Emirates ID required".
+    min_age = models.PositiveSmallIntegerField(blank=True, null=True)
+    entry_restrictions = models.CharField(max_length=300, blank=True)
     language = models.CharField(
         max_length=10, choices=Language.choices, default=Language.EN
     )
@@ -109,6 +115,14 @@ class Event(models.Model):
             models.Q(status__in=[Booking.Status.CONFIRMED, Booking.Status.ATTENDED])
             | models.Q(status=Booking.Status.PENDING, booked_at__gte=hold_cutoff)
         ).aggregate(total=models.Sum("quantity"))["total"] or 0
+
+    @property
+    def entry_requirements_display(self):
+        """One line for emails/Stripe, e.g. "18+ · Women only" ("" if none)."""
+        parts = [f"{self.min_age}+"] if self.min_age else []
+        if self.entry_restrictions.strip():
+            parts.append(self.entry_restrictions.strip())
+        return " · ".join(parts)
 
     @property
     def spots_left(self):

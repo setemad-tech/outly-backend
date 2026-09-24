@@ -14,6 +14,9 @@ class EventSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     spots_left = serializers.IntegerField(read_only=True)
     chat_closes_at = serializers.DateTimeField(read_only=True)
+    min_age = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1, max_value=99
+    )
 
     class Meta:
         model = Event
@@ -21,7 +24,7 @@ class EventSerializer(serializers.ModelSerializer):
             "id", "title", "slug", "description", "cover_image",
             "venue_name", "city", "latitude", "longitude",
             "start_at", "end_at", "price_minor", "currency",
-            "capacity", "spots_left", "language", "status",
+            "capacity", "spots_left", "min_age", "entry_restrictions", "language", "status",
             "category", "category_name", "organizer", "organizer_name", "perks",
             "chat_closes_at",
         ]

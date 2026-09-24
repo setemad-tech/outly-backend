@@ -33,6 +33,8 @@ class TicketEventSerializer(serializers.Serializer):
     cover_image = serializers.ImageField(allow_null=True)
     price_minor = serializers.IntegerField()
     currency = serializers.CharField()
+    min_age = serializers.IntegerField(allow_null=True)
+    entry_restrictions = serializers.CharField()
 
 
 class TicketSerializer(serializers.ModelSerializer):

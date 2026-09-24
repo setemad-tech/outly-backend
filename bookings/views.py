@@ -167,10 +167,15 @@ class CheckInView(APIView):
 
     One QR covers a whole booking of `quantity` people. For a single ticket
     a scan admits that person straight away. For a group, a scan without
-    "admit" admits nobody and returns 200 with needs_count=true plus the
+    "admit" admits nobody and returns 428 with needs_count=true plus the
     group size and how many are already in; the scanner then asks the door
     person how many to let in and repeats the call with "admit": N. That
     way a camera re-reading the same code can never admit extra people.
+
+    Rule: a 2xx from this endpoint ALWAYS means someone was admitted. The
+    "how many?" question is deliberately not a 2xx, so a scanner that
+    doesn't know about groups (e.g. an outdated cached page) shows it as a
+    rejection instead of a false "Checked in".
 
     This is the actual missing piece behind the "Check-in (QR Scan)"
     button. Organizer-only, and further scoped to only THEIR events —
@@ -254,13 +259,16 @@ class CheckInView(APIView):
                 return Response(
                     {
                         "needs_count": True,
-                        "detail": f"Group ticket for {booking.quantity}.",
+                        "detail": (
+                            f"Group ticket for {booking.quantity} — choose how many to admit. "
+                            "If no options appear, reload the scanner page."
+                        ),
                         "attendee": attendee,
                         "event": booking.event.title,
                         "quantity": booking.quantity,
                         "checked_in_count": booking.checked_in_count,
                     },
-                    status=200,
+                    status=428,  # Precondition Required — see docstring
                 )
             admit = 1
 
