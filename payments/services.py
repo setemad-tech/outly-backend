@@ -8,6 +8,7 @@ PCI-DSS scope stays minimal (SAQ A).
 """
 
 import logging
+from datetime import timedelta
 
 import stripe
 from django.conf import settings
@@ -60,6 +61,12 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
         }],
         success_url=success_url,
         cancel_url=cancel_url,
+        customer_email=booking.user.email,
+        # Stripe's minimum lifetime, not the spot hold — see
+        # CHECKOUT_HOLD_MINUTES / release_stale_holds for the 5-minute hold.
+        expires_at=int(
+            (timezone_now() + timedelta(minutes=settings.CHECKOUT_SESSION_EXPIRY_MINUTES)).timestamp()
+        ),
         client_reference_id=str(booking.id),
         metadata={"booking_id": str(booking.id)},
         idempotency_key=f"booking-checkout-{booking.id}",
@@ -129,6 +136,13 @@ def handle_checkout_completed(session: dict):
     if booking.status == Booking.Status.CONFIRMED:
         return  # already processed, nothing to do
 
+    if session["payment_status"] != "paid":
+        # Checkout finished but the money hasn't actually moved yet (only
+        # possible with delayed payment methods — card-only today). Don't
+        # issue a ticket for an unpaid booking.
+        logger.warning("Checkout completed unpaid for booking %s", booking.id)
+        return
+
     booking.status = Booking.Status.CONFIRMED
     booking.save(update_fields=["status"])
 
@@ -159,6 +173,63 @@ def handle_checkout_expired(session: dict):
     cancel_pending_booking(booking)
 
 
+def release_abandoned_checkout(*, user, event_id):
+    """
+    Called before starting a new checkout. If this user already has a
+    PENDING booking for the event (they backed out of Stripe, or closed the
+    tab), expire its Stripe session so it can no longer be paid, then cancel
+    the booking so they can start over.
+
+    If that old session turns out to have been paid already (webhook just
+    hasn't landed yet), confirm the booking right now instead — the new
+    checkout attempt will then correctly fail with "already have a booking".
+    """
+    booking = (
+        Booking.objects.filter(user=user, event_id=event_id, status=Booking.Status.PENDING)
+        .select_related("payment")
+        .first()
+    )
+    if booking is not None:
+        _release_pending_booking(booking)
+
+
+def release_stale_holds(*, event_id):
+    """
+    Called before starting any checkout for an event. PENDING bookings older
+    than CHECKOUT_HOLD_MINUTES already don't count against capacity, but
+    their Stripe session is still payable (Stripe won't expire it sooner
+    than 30 min). Expire those sessions now, so a spot handed to the next
+    person can't also be paid for by whoever abandoned it.
+    """
+    cutoff = timezone_now() - timedelta(minutes=settings.CHECKOUT_HOLD_MINUTES)
+    stale = Booking.objects.filter(
+        event_id=event_id, status=Booking.Status.PENDING, booked_at__lt=cutoff
+    ).select_related("payment")
+    for booking in stale:
+        _release_pending_booking(booking)
+
+
+def _release_pending_booking(booking: Booking):
+    """
+    Expire the booking's Stripe session and cancel it. If the session turns
+    out to be paid already (webhook just hasn't landed yet), confirm the
+    booking instead — the spot is genuinely taken.
+    """
+    payment = getattr(booking, "payment", None)
+    session_id = payment.provider_reference if payment else ""
+    if session_id.startswith("cs_"):
+        try:
+            stripe.checkout.Session.expire(session_id)
+        except stripe.error.InvalidRequestError:
+            # Session is no longer open — either already expired or completed.
+            session = stripe.checkout.Session.retrieve(session_id)
+            if session["status"] == "complete":
+                handle_checkout_completed(session)
+                return
+
+    cancel_pending_booking(booking)
+
+
 def timezone_now():
     from django.utils import timezone
     return timezone.now()
@@ -177,7 +248,7 @@ def handle_account_updated(account: dict):
     except OrganizerProfile.DoesNotExist:
         return  # webhook for an account we don't recognize — ignore, don't error
 
-    complete = bool(account.get("payouts_enabled"))
+    complete = bool(getattr(account, "payouts_enabled", False))
     if profile.stripe_onboarding_complete != complete:
         profile.stripe_onboarding_complete = complete
         profile.save(update_fields=["stripe_onboarding_complete"])

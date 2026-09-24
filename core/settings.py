@@ -251,6 +251,18 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 PLATFORM_COMMISSION_PERCENT = int(os.environ.get("PLATFORM_COMMISSION_PERCENT", 0))
 
+# How long a PENDING (unpaid) booking holds its spot. After this,
+# Event.spots_taken stops counting it, and the next person to start a
+# checkout for that event first expires the stale Stripe session (see
+# payments.services.release_stale_holds) so the late payer can't also pay
+# for a spot that's been handed on.
+CHECKOUT_HOLD_MINUTES = 5
+
+# Stripe refuses Checkout Sessions that expire sooner than 30 minutes, so
+# the session itself lives this long. It's only a backstop — the spot hold
+# above is what actually matters.
+CHECKOUT_SESSION_EXPIRY_MINUTES = 31
+
 
 # ---------------------------------------------------------------------
 # Chat (Channels)

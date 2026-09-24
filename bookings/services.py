@@ -48,21 +48,23 @@ def create_pending_booking(*, user, event_id: str, quantity: int = 1) -> Booking
     if event.spots_left < quantity:
         raise SoldOutError(f"Only {event.spots_left} spot(s) left.")
 
-    booking, created = Booking.objects.get_or_create(
-        event=event,
-        user=user,
-        defaults={
-            "quantity": quantity,
-            "status": Booking.Status.PENDING,
-            "price_paid_minor": event.price_minor * quantity,
-        },
+    already_booked = (
+        Booking.objects.filter(event=event, user=user)
+        .exclude(status=Booking.Status.CANCELLED)
+        .exists()
     )
-    if not created:
-        # user already has a booking for this event (unique constraint) —
+    if already_booked:
+        # user already has a live booking for this event (unique constraint) —
         # surface that instead of silently no-op'ing
         raise ValidationError("You already have a booking for this event.")
 
-    return booking
+    return Booking.objects.create(
+        event=event,
+        user=user,
+        quantity=quantity,
+        status=Booking.Status.PENDING,
+        price_paid_minor=event.price_minor * quantity,
+    )
 
 
 @transaction.atomic

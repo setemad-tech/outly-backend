@@ -36,8 +36,13 @@ class Booking(models.Model):
 
     class Meta:
         constraints = [
+            # Only one *live* booking per user per event. Cancelled ones are
+            # kept as records (abandoned checkouts, refunds) and must not
+            # stop the same user from booking again.
             models.UniqueConstraint(
-                fields=["event", "user"], name="one_booking_per_user_per_event"
+                fields=["event", "user"],
+                condition=~models.Q(status="cancelled"),
+                name="one_active_booking_per_user_per_event",
             )
         ]
 

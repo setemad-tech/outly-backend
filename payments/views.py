@@ -11,6 +11,8 @@ check in verify_and_parse_webhook(), which is why that check is mandatory,
 not optional.
 """
 
+import logging
+
 import stripe
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
@@ -23,12 +25,27 @@ from bookings.services import create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from . import services
 
+logger = logging.getLogger(__name__)
+
 
 class CreateCheckoutSessionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, event_id):
         quantity = int(request.data.get("quantity", 1))
+
+        try:
+            # A previous attempt the user backed out of would otherwise block
+            # this one ("already have a booking") until it expired.
+            services.release_abandoned_checkout(user=request.user, event_id=event_id)
+            # Frees spots whose 5-minute hold ran out, before capacity is checked.
+            services.release_stale_holds(event_id=event_id)
+        except stripe.error.StripeError:
+            logger.exception("Could not release abandoned checkout for event %s", event_id)
+            return Response(
+                {"detail": "Couldn't reach the payment provider — please try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         try:
             booking = create_pending_booking(

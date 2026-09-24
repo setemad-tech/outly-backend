@@ -98,9 +98,16 @@ class Event(models.Model):
     def spots_taken(self):
         # local import avoids events <-> bookings circular import
         from bookings.models import Booking
+        from django.conf import settings
+        from django.utils import timezone
 
+        # PENDING bookings (someone currently on the Stripe payment page)
+        # hold their spot too — otherwise two people could both pay for the
+        # last spot. Only recent ones, though: see CHECKOUT_HOLD_MINUTES.
+        hold_cutoff = timezone.now() - timedelta(minutes=settings.CHECKOUT_HOLD_MINUTES)
         return self.bookings.filter(
-            status__in=[Booking.Status.CONFIRMED, Booking.Status.ATTENDED]
+            models.Q(status__in=[Booking.Status.CONFIRMED, Booking.Status.ATTENDED])
+            | models.Q(status=Booking.Status.PENDING, booked_at__gte=hold_cutoff)
         ).aggregate(total=models.Sum("quantity"))["total"] or 0
 
     @property
