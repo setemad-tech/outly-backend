@@ -13,12 +13,17 @@ from events.models import Event
 from .models import Booking
 
 
+# Per booking, not per event — one person can buy for a group, but not
+# sweep up a whole event in a single checkout.
+MAX_TICKETS_PER_BOOKING = 10
+
+
 class SoldOutError(ValidationError):
     pass
 
 
 @transaction.atomic
-def create_pending_booking(*, user, event_id: str, quantity: int = 1) -> Booking:
+def create_pending_booking(*, user, event_id: str, quantity=1) -> Booking:
     """
     Creates a PENDING booking, holding `quantity` spots, iff capacity allows.
 
@@ -38,6 +43,15 @@ def create_pending_booking(*, user, event_id: str, quantity: int = 1) -> Booking
         # take it just to reject the request anyway.
         raise ValidationError(
             "Verify your email before booking — check your inbox for the code."
+        )
+
+    try:
+        quantity = int(quantity)
+    except (TypeError, ValueError):
+        raise ValidationError("Invalid number of tickets.")
+    if not 1 <= quantity <= MAX_TICKETS_PER_BOOKING:
+        raise ValidationError(
+            f"You can book between 1 and {MAX_TICKETS_PER_BOOKING} tickets at a time."
         )
 
     event = Event.objects.select_for_update().get(pk=event_id)

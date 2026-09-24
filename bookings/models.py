@@ -32,7 +32,10 @@ class Booking(models.Model):
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     price_paid_minor = models.PositiveIntegerField(default=0)  # snapshot at booking time
     booked_at = models.DateTimeField(auto_now_add=True)
-    checked_in_at = models.DateTimeField(blank=True, null=True)
+    checked_in_at = models.DateTimeField(blank=True, null=True)  # first person through the door
+    # One QR covers the whole booking: a group of `quantity` people can come
+    # in together or one at a time, and this tracks how many are in so far.
+    checked_in_count = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         constraints = [

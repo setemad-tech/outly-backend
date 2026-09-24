@@ -8,7 +8,7 @@ import logging
 from django.core import signing
 from django.db import transaction
 from django.db.models import Sum, Count, Q
-from django.db.models.functions import TruncDate
+from django.db.models.functions import Coalesce, TruncDate
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import serializers, generics, permissions, status
@@ -59,7 +59,7 @@ class CreateFreeBookingView(APIView):
             booking = create_pending_booking(
                 user=request.user,
                 event_id=event_id,
-                quantity=int(request.data.get("quantity", 1)),
+                quantity=request.data.get("quantity", 1),
             )
         except SoldOutError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)
@@ -122,7 +122,10 @@ class ParticipantSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ["id", "name", "email", "status", "quantity", "booked_at", "checked_in_at"]
+        fields = [
+            "id", "name", "email", "status", "quantity", "checked_in_count",
+            "booked_at", "checked_in_at",
+        ]
 
 
 class ParticipantsListView(generics.ListAPIView):
@@ -159,7 +162,15 @@ class ParticipantsListView(generics.ListAPIView):
 class CheckInView(APIView):
     """
     POST /api/bookings/checkin/
-    body: {"qr_payload": "<the signed string from the ticket QR>"}
+    body: {"qr_payload": "<the signed string from the ticket QR>",
+           "event_id": "<optional>", "admit": <optional int>}
+
+    One QR covers a whole booking of `quantity` people. For a single ticket
+    a scan admits that person straight away. For a group, a scan without
+    "admit" admits nobody and returns 200 with needs_count=true plus the
+    group size and how many are already in; the scanner then asks the door
+    person how many to let in and repeats the call with "admit": N. That
+    way a camera re-reading the same code can never admit extra people.
 
     This is the actual missing piece behind the "Check-in (QR Scan)"
     button. Organizer-only, and further scoped to only THEIR events —
@@ -170,11 +181,12 @@ class CheckInView(APIView):
       1. Verify the signature — rejects tampered/forged codes without a DB
          lookup (django.core.signing raises BadSignature on mismatch).
       2. Look up the booking, confirm it belongs to THIS organizer's event.
-      3. Reject if not CONFIRMED (e.g. still PENDING, or CANCELLED).
-      4. Reject if already ATTENDED — a screenshotted/shared ticket can't
-         be scanned twice. This, not the QR encoding itself, is what
-         actually prevents ticket sharing/reuse.
-      5. Mark ATTENDED + stamp checked_in_at.
+      3. Reject if not CONFIRMED/ATTENDED (e.g. still PENDING, or CANCELLED).
+      4. Reject once everyone on the booking is in — a screenshotted/shared
+         ticket can't admit more people than were paid for. This, not the
+         QR encoding itself, is what actually prevents ticket sharing/reuse.
+      5. Add to checked_in_count, mark ATTENDED + stamp checked_in_at on the
+         first admission.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -210,31 +222,72 @@ class CheckInView(APIView):
                 status=400,
             )
 
-        if booking.status == Booking.Status.ATTENDED:
-            return Response(
-                {
-                    "detail": "Already checked in.",
-                    "checked_in_at": booking.checked_in_at,
-                    "attendee": booking.user.get_full_name() or booking.user.email,
-                },
-                status=409,
-            )
+        attendee = booking.user.get_full_name() or booking.user.email
+        remaining = booking.quantity - booking.checked_in_count
 
-        if booking.status != Booking.Status.CONFIRMED:
+        if booking.status not in (Booking.Status.CONFIRMED, Booking.Status.ATTENDED):
             return Response(
                 {"detail": f"Ticket is {booking.status}, not valid for entry."}, status=400
             )
 
+        if remaining <= 0:
+            detail = (
+                "Already checked in."
+                if booking.quantity == 1
+                else f"All {booking.quantity} people on this ticket are already in."
+            )
+            return Response(
+                {
+                    "detail": detail,
+                    "checked_in_at": booking.checked_in_at,
+                    "attendee": attendee,
+                    "quantity": booking.quantity,
+                    "checked_in_count": booking.checked_in_count,
+                },
+                status=409,
+            )
+
+        admit = request.data.get("admit")
+        if admit is None:
+            if booking.quantity > 1:
+                # Group ticket: ask the door person how many are here.
+                return Response(
+                    {
+                        "needs_count": True,
+                        "detail": f"Group ticket for {booking.quantity}.",
+                        "attendee": attendee,
+                        "event": booking.event.title,
+                        "quantity": booking.quantity,
+                        "checked_in_count": booking.checked_in_count,
+                    },
+                    status=200,
+                )
+            admit = 1
+
+        try:
+            admit = int(admit)
+        except (TypeError, ValueError):
+            return Response({"detail": "Invalid number of people to admit."}, status=400)
+        if not 1 <= admit <= remaining:
+            return Response(
+                {"detail": f"Only {remaining} more can come in on this ticket."}, status=400
+            )
+
+        booking.checked_in_count += admit
         booking.status = Booking.Status.ATTENDED
-        booking.checked_in_at = timezone.now()
-        booking.save(update_fields=["status", "checked_in_at"])
+        if booking.checked_in_at is None:
+            booking.checked_in_at = timezone.now()
+        booking.save(update_fields=["status", "checked_in_at", "checked_in_count"])
 
         return Response(
             {
                 "detail": "Checked in.",
-                "attendee": booking.user.get_full_name() or booking.user.email,
+                "attendee": attendee,
                 "event": booking.event.title,
                 "checked_in_at": booking.checked_in_at,
+                "admitted": admit,
+                "quantity": booking.quantity,
+                "checked_in_count": booking.checked_in_count,
             },
             status=200,
         )
@@ -275,7 +328,9 @@ class OrganizerAnalyticsView(APIView):
         attendance_rows = (
             Event.objects.filter(organizer=profile)
             .annotate(
-                attending=Count("bookings", filter=Q(bookings__status__in=paid_statuses))
+                attending=Coalesce(  # people, not bookings — a group of 5 is 5
+                    Sum("bookings__quantity", filter=Q(bookings__status__in=paid_statuses)), 0
+                )
             )
             .values("id", "title", "capacity", "attending")
             .order_by("start_at")

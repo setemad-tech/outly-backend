@@ -41,7 +41,7 @@ class TicketSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ["id", "event", "status", "quantity", "booked_at", "qr_payload"]
+        fields = ["id", "event", "status", "quantity", "checked_in_count", "booked_at", "qr_payload"]
 
     def get_qr_payload(self, booking):
         """

@@ -193,6 +193,25 @@ def release_abandoned_checkout(*, user, event_id):
         _release_pending_booking(booking)
 
 
+def sync_booking_from_stripe(booking: Booking):
+    """
+    Asks Stripe directly whether this PENDING booking's checkout has been
+    paid, and confirms it if so — the same work the webhook does. Lets the
+    post-payment page confirm the ticket immediately instead of waiting on
+    webhook delivery. Safe to call repeatedly: handle_checkout_completed is
+    idempotent, and anything other than a paid session is left alone.
+    """
+    if booking.status != Booking.Status.PENDING:
+        return
+    payment = getattr(booking, "payment", None)
+    session_id = payment.provider_reference if payment else ""
+    if not session_id.startswith("cs_"):
+        return
+    session = stripe.checkout.Session.retrieve(session_id)
+    if session["status"] == "complete":
+        handle_checkout_completed(session)
+
+
 def release_stale_holds(*, event_id):
     """
     Called before starting any checkout for an event. PENDING bookings older

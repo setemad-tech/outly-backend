@@ -1,8 +1,9 @@
 """
 payments/views.py
 ------------------
-Two endpoints:
+Three endpoints:
   POST /api/bookings/<event_id>/checkout/   - authenticated user starts payment
+  POST /api/bookings/<pk>/sync-payment/     - post-payment page confirms with Stripe
   POST /api/payments/webhook/                - Stripe calls this, not the frontend
 
 The webhook view intentionally has NO auth/permission requirement in the
@@ -14,6 +15,7 @@ not optional.
 import logging
 
 import stripe
+from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from rest_framework.views import APIView
@@ -21,6 +23,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
+from bookings.models import Booking
+from bookings.serializers import TicketSerializer
 from bookings.services import create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from . import services
@@ -32,7 +36,7 @@ class CreateCheckoutSessionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, event_id):
-        quantity = int(request.data.get("quantity", 1))
+        quantity = request.data.get("quantity", 1)  # validated in create_pending_booking
 
         try:
             # A previous attempt the user backed out of would otherwise block
@@ -93,6 +97,30 @@ class CreateCheckoutSessionView(APIView):
             return Response({"detail": f"Payment setup failed: {message}"}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({"checkout_url": session.url}, status=status.HTTP_201_CREATED)
+
+
+class SyncBookingPaymentView(APIView):
+    """
+    Polled by the frontend's /tickets/pending page after Stripe redirects
+    back. Checks the checkout with Stripe itself, so the ticket is confirmed
+    as soon as payment went through rather than whenever the webhook lands.
+    The webhook still does the same thing on its own — whichever runs first
+    wins, the other is a no-op.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        booking = get_object_or_404(
+            Booking.objects.select_related("event", "payment"), pk=pk, user=request.user
+        )
+        try:
+            services.sync_booking_from_stripe(booking)
+        except stripe.error.StripeError:
+            # Not fatal — the webhook will still confirm it. Report the
+            # booking as it stands and let the page poll again.
+            logger.exception("Stripe sync failed for booking %s", booking.id)
+        booking.refresh_from_db()
+        return Response(TicketSerializer(booking).data)
 
 
 @method_decorator(csrf_exempt, name="dispatch")

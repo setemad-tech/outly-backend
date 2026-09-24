@@ -28,6 +28,17 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
 
     qr_url = f"{settings.SITE_URL}/api/bookings/{booking.id}/qr.png/"
 
+    # One QR admits the whole booking — say so, same as the in-app ticket.
+    holder = booking.user.get_full_name() or booking.user.email
+    extra = booking.quantity - 1
+    holder_display = f"{holder} + {extra}" if extra else holder
+    admits_html = (
+        f'<p style="margin: 4px 0 0; font-size: 13px; font-weight: 700;">'
+        f"Admits {booking.quantity} people</p>"
+        if extra else ""
+    )
+    admits_text = f"Admits {booking.quantity} people\n" if extra else ""
+
     html_body = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 480px; margin: 0 auto; color: #111;">
       <p style="letter-spacing: 3px; font-weight: 800; font-size: 13px; margin-bottom: 4px;">OUTLY</p>
@@ -38,6 +49,9 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
         Payment confirmed: <strong>{amount_display}</strong>
       </p>
       <img src="{qr_url}" alt="Your ticket QR code" width="220" height="220" style="display:block;" />
+      <p style="margin: 16px 0 0; font-size: 14px; font-weight: 600;">Ticket for</p>
+      <p style="margin: 2px 0 0; font-size: 14px; color: #666;">{holder_display}</p>
+      {admits_html}
       <p style="color: #888; font-size: 13px; margin-top: 20px;">
         Show this QR code at the entrance.<br>
         Booking reference: {reference}
@@ -48,6 +62,8 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
         f"Your ticket for {event.title}\n"
         f"{event.venue_name} — {when_display}\n"
         f"Payment confirmed: {amount_display}\n"
+        f"Ticket for: {holder_display}\n"
+        f"{admits_text}"
         f"Booking reference: {reference}\n"
         f"QR code: {qr_url}\n"
         "Show your QR ticket in the OUTLY app at the entrance."
