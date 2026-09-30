@@ -205,6 +205,14 @@ else:
     # must NOT also include it, or the path doubles up.
     MEDIA_URL = "/media/"
     MEDIA_ROOT = BASE_DIR / "media"
+    # Defining STORAGES replaces Django's defaults entirely, so without this
+    # there is no "default" storage and every upload (event covers) crashed
+    # with InvalidStorageError. Local disk is fine for development, but on
+    # Render the disk is wiped on every deploy/restart — set the R2_* vars
+    # there so uploads persist.
+    STORAGES["default"] = {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    }
 
 
 REST_FRAMEWORK = {

@@ -8,8 +8,10 @@ at all — hence every request 404ing at the Django level, before it even
 reached your views.
 """
 
+from django.conf import settings
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
+from django.views.static import serve
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -20,3 +22,10 @@ urlpatterns = [
     path("api/", include("payments.urls")),
     path("api/", include("chat.urls")),
 ]
+
+if not settings.USE_R2:
+    # Uploaded files on local disk (no R2 configured) — served by Django so
+    # cover images at least load. With R2, files are served by Cloudflare.
+    urlpatterns += [
+        re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    ]

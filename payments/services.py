@@ -51,6 +51,18 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
     session_kwargs = dict(
         mode="payment",
         payment_method_types=["card"],
+        # --- Configured in Stripe's Checkout Studio (see
+        # STRIPE_INTEGRATION_TODO.md). ui_mode is "hosted_page": the API
+        # rejects the older "hosted" value on this account's API version.
+        ui_mode="hosted_page",
+        billing_address_collection="auto",
+        phone_number_collection={"enabled": False},
+        automatic_tax={"enabled": False},
+        allow_promotion_codes=False,
+        submit_type="auto",
+        integration_identifier="hosted_web_0002",
+        origin_context="web",
+        # ---------------------------------------------------------------
         line_items=[{
             "price_data": {
                 "currency": booking.event.currency.lower(),
