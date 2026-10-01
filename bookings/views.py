@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 from .services import create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from events.models import Event
+from accounts.models import approved_organizer
 
 
 
@@ -145,13 +146,14 @@ class ParticipantsListView(generics.ListAPIView):
         event_id = self.kwargs["event_id"]
         user = self.request.user
 
-        if not hasattr(user, "organizer_profile"):
+        profile = approved_organizer(user)
+        if profile is None:
             return Booking.objects.none()
 
         return (
             Booking.objects.filter(
                 event_id=event_id,
-                event__organizer=user.organizer_profile,  # only this organizer's own events
+                event__organizer=profile,  # only this organizer's own events
                 status__in=[Booking.Status.CONFIRMED, Booking.Status.ATTENDED],
             )
             .select_related("user")
@@ -197,8 +199,9 @@ class CheckInView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        if not hasattr(request.user, "organizer_profile"):
-            return Response({"detail": "Only organizers can check in tickets."}, status=403)
+        organizer = approved_organizer(request.user)
+        if organizer is None:
+            return Response({"detail": "Only approved organizers can check in tickets."}, status=403)
 
         raw_payload = request.data.get("qr_payload", "")
         try:
@@ -213,7 +216,7 @@ class CheckInView(APIView):
         except Booking.DoesNotExist:
             return Response({"detail": "Ticket not found."}, status=404)
 
-        if booking.event.organizer_id != request.user.organizer_profile.id:
+        if booking.event.organizer_id != organizer.id:
             return Response({"detail": "This ticket isn't for one of your events."}, status=403)
 
         # Optional — the frontend now scans from inside a specific event's
@@ -314,9 +317,9 @@ class OrganizerAnalyticsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        profile = getattr(request.user, "organizer_profile", None)
+        profile = approved_organizer(request.user)
         if profile is None:
-            return Response({"detail": "Not an organizer yet."}, status=403)
+            return Response({"detail": "Your organizer account hasn't been approved yet."}, status=403)
 
         paid_statuses = [Booking.Status.CONFIRMED, Booking.Status.ATTENDED]
 

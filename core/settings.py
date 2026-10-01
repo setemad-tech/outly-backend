@@ -250,6 +250,10 @@ TICKETS_FROM_EMAIL = os.environ.get("TICKETS_FROM_EMAIL", DEFAULT_FROM_EMAIL)
 # on this fallback.
 SITE_URL = os.environ.get("SITE_URL", "https://api.outly.ae")
 
+# The web app's public URL — linked from account emails (e.g. "your
+# organizer application was approved, open your dashboard").
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://outly.ae")
+
 
 # ---------------------------------------------------------------------
 # Payments

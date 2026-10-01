@@ -87,15 +87,45 @@ class User(AbstractUser):
 
 class OrganizerProfile(models.Model):
     """
-    Any user can become an organizer without needing a separate account
-    type — this just attaches organizer-only fields to an existing user.
+    Any user can apply to become an organizer without needing a separate
+    account type — this just attaches organizer-only fields to an existing
+    user. Applying only creates a PENDING profile: a person reviews it in
+    Django admin and approves (or rejects) it there. Nothing organizer-only
+    (creating events, check-in, payouts...) works until it's APPROVED — use
+    approved_organizer(user) below rather than hasattr(user, "organizer_profile").
     """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending review"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
     user = models.OneToOneField(
         "accounts.User", on_delete=models.CASCADE, related_name="organizer_profile"
     )
     display_name = models.CharField(max_length=80)
     bio = models.TextField(blank=True)
-    is_verified = models.BooleanField(default=False)
+
+    # --- Application details (what the reviewer checks) -------------------
+    city = models.CharField(max_length=80, blank=True)
+    instagram = models.CharField(max_length=100, blank=True)
+    website = models.CharField(max_length=200, blank=True)
+    event_types = models.JSONField(default=list, blank=True)
+
+    # --- Manual review ----------------------------------------------------
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    review_note = models.TextField(
+        blank=True,
+        help_text="Shown to the applicant when their application is rejected.",
+    )
+    reviewed_at = models.DateTimeField(blank=True, null=True)
+    reviewed_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, blank=True, null=True,
+        related_name="+",
+    )
+
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     events_hosted = models.PositiveIntegerField(default=0)
 
@@ -119,6 +149,21 @@ class OrganizerProfile(models.Model):
 
     def __str__(self):
         return self.display_name
+
+    @property
+    def is_verified(self):
+        """Kept for API compatibility — "verified" now means "approved by admin"."""
+        return self.status == self.Status.APPROVED
+
+
+def approved_organizer(user):
+    """The user's OrganizerProfile if an admin has approved it, else None."""
+    if not getattr(user, "is_authenticated", False):
+        return None
+    profile = getattr(user, "organizer_profile", None)
+    if profile is None or profile.status != OrganizerProfile.Status.APPROVED:
+        return None
+    return profile
 
 
 class EmailOTP(models.Model):

@@ -22,10 +22,33 @@ class OrganizerProfileSerializer(serializers.ModelSerializer):
     # this expecting a real number. coerce_to_string=False makes it come
     # through as an actual JSON number (0.0) instead.
     rating = serializers.DecimalField(max_digits=3, decimal_places=2, coerce_to_string=False)
+    is_verified = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = OrganizerProfile
-        fields = ["display_name", "bio", "is_verified", "rating", "events_hosted"]
+        fields = [
+            "display_name", "bio", "city", "instagram", "website", "event_types",
+            "status", "review_note", "is_verified", "rating", "events_hosted",
+            "created_at",
+        ]
+
+
+class OrganizerApplicationSerializer(serializers.ModelSerializer):
+    """What an applicant submits via POST /api/me/apply-organizer/."""
+    display_name = serializers.CharField(max_length=80)
+    event_types = serializers.ListField(
+        child=serializers.CharField(max_length=40), required=False, max_length=20
+    )
+
+    class Meta:
+        model = OrganizerProfile
+        fields = ["display_name", "bio", "city", "instagram", "website", "event_types"]
+
+    def validate_display_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Add your organization or community name.")
+        return value
 
 
 class ProfileSerializer(serializers.ModelSerializer):
@@ -103,18 +126,20 @@ class OrganizerSettingsSerializer(serializers.ModelSerializer):
     # arrives in the frontend as a string ("0.00") instead of a number,
     # breaking any .toFixed() call on it.
     rating = serializers.DecimalField(max_digits=3, decimal_places=2, coerce_to_string=False)
+    is_verified = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = OrganizerProfile
         fields = [
-            "display_name", "bio", "is_verified", "rating",
+            "display_name", "bio", "city", "instagram", "website",
+            "status", "is_verified", "rating",
             "events_hosted", "stripe_onboarding_complete",
         ]
-        # Only display_name/bio are actually editable by the organizer —
-        # verification, rating, event count, and payout status are all
+        # Only the profile text (name, bio, city, links) is editable by the
+        # organizer — review status, rating, event count, and payout status are all
         # server-computed. Exposed read-only here so ONE endpoint can back
         # the whole settings screen instead of the frontend stitching
         # together multiple partial views.
         read_only_fields = [
-            "is_verified", "rating", "events_hosted", "stripe_onboarding_complete",
+            "status", "rating", "events_hosted", "stripe_onboarding_complete",
         ]

@@ -18,11 +18,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import OrganizerProfile
+from .models import OrganizerProfile, approved_organizer
 from .otp import OTP_RESEND_COOLDOWN_SECONDS, OtpError, generate_and_send_otp, verify_otp
 from .serializers import (
     ProfileSerializer,
     OrganizerProfileSerializer,
+    OrganizerApplicationSerializer,
     RegisterSerializer,
     ChangeEmailSerializer,
     ChangePasswordSerializer,
@@ -183,24 +184,41 @@ class VerifyEmailOtpView(APIView):
 class ApplyOrganizerView(APIView):
     """
     POST /api/me/apply-organizer/
-    Creates an OrganizerProfile for request.user if they don't have one yet.
-    Idempotent: calling it again just returns the existing profile rather
-    than erroring — the frontend doesn't need to check "am I already an
-    organizer" before calling this.
+    body: {display_name, bio?, city?, instagram?, website?, event_types?}
+
+    Submits an organizer application for manual review — it never grants
+    organizer access by itself. The profile starts PENDING and an admin
+    approves or rejects it in Django admin (accounts/admin.py).
+
+      - no profile yet  -> creates a PENDING one (201)
+      - PENDING         -> updates the application details (200)
+      - REJECTED        -> updates the details and re-submits as PENDING (200)
+      - APPROVED        -> no-op, returns the profile (200)
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        profile, _ = OrganizerProfile.objects.get_or_create(
-            user=request.user,
-            defaults={
-                "display_name": request.data.get("display_name", "").strip()
-                or request.user.get_full_name()
-                or request.user.email,
-                "bio": request.data.get("bio", ""),
-            },
+        profile = getattr(request.user, "organizer_profile", None)
+        if profile is not None and profile.status == OrganizerProfile.Status.APPROVED:
+            return Response(OrganizerProfileSerializer(profile).data)
+
+        serializer = OrganizerApplicationSerializer(profile, data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if profile is None:
+            profile = serializer.save(user=request.user)
+            logger.info("Organizer application submitted by %s", request.user.email)
+            return Response(OrganizerProfileSerializer(profile).data, status=status.HTTP_201_CREATED)
+
+        if profile.status == OrganizerProfile.Status.REJECTED:
+            logger.info("Organizer application re-submitted by %s", request.user.email)
+        profile = serializer.save(
+            status=OrganizerProfile.Status.PENDING,
+            review_note="",
+            reviewed_at=None,
+            reviewed_by=None,
         )
-        return Response(OrganizerProfileSerializer(profile).data, status=status.HTTP_201_CREATED)
+        return Response(OrganizerProfileSerializer(profile).data)
 
 
 class OrganizerSettingsView(generics.RetrieveUpdateAPIView):
@@ -230,9 +248,9 @@ class ConnectStripeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        profile = getattr(request.user, "organizer_profile", None)
+        profile = approved_organizer(request.user)
         if profile is None:
-            return Response({"detail": "Not an organizer yet."}, status=403)
+            return Response({"detail": "Your organizer account hasn't been approved yet."}, status=403)
 
         if not profile.stripe_account_id:
             account = stripe.Account.create(
