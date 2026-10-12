@@ -12,6 +12,8 @@ class EventPerkSerializer(serializers.ModelSerializer):
 class EventSerializer(serializers.ModelSerializer):
     perks = EventPerkSerializer(many=True, required=False)
     organizer_name = serializers.CharField(source="organizer.display_name", read_only=True)
+    organizer_logo = serializers.ImageField(source="organizer.logo", read_only=True)
+    organizer_verified = serializers.BooleanField(source="organizer.is_verified", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     spots_left = serializers.IntegerField(read_only=True)
     chat_closes_at = serializers.DateTimeField(read_only=True)
@@ -32,7 +34,7 @@ class EventSerializer(serializers.ModelSerializer):
             "venue_name", "city", "latitude", "longitude",
             "start_at", "end_at", "price_minor", "currency",
             "capacity", "spots_left", "min_age", "entry_restrictions", "language", "status",
-            "category", "category_name", "category_label", "organizer", "organizer_name", "perks",
+            "category", "category_name", "category_label", "organizer", "organizer_name", "organizer_logo", "organizer_verified", "perks",
             "chat_closes_at",
         ]
         read_only_fields = ["id", "organizer", "spots_left"]

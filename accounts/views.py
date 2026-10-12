@@ -102,7 +102,7 @@ class ChangeEmailView(APIView):
         except Exception:
             logger.exception("Failed to send verification email to %s", request.user.email)
 
-        return Response(ProfileSerializer(request.user).data)
+        return Response(ProfileSerializer(request.user, context={"request": request}).data)
 
 
 class ChangePasswordView(APIView):
@@ -167,7 +167,7 @@ class VerifyEmailOtpView(APIView):
     def post(self, request):
         user = request.user
         if user.email_verified:
-            return Response(ProfileSerializer(user).data)
+            return Response(ProfileSerializer(user, context={"request": request}).data)
 
         code = str(request.data.get("code", "")).strip()
         if not code:
@@ -178,7 +178,7 @@ class VerifyEmailOtpView(APIView):
         except OtpError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(ProfileSerializer(user).data)
+        return Response(ProfileSerializer(user, context={"request": request}).data)
 
 
 class ApplyOrganizerView(APIView):
@@ -200,7 +200,7 @@ class ApplyOrganizerView(APIView):
     def post(self, request):
         profile = getattr(request.user, "organizer_profile", None)
         if profile is not None and profile.status == OrganizerProfile.Status.APPROVED:
-            return Response(OrganizerProfileSerializer(profile).data)
+            return Response(OrganizerProfileSerializer(profile, context={"request": request}).data)
 
         serializer = OrganizerApplicationSerializer(profile, data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -208,7 +208,7 @@ class ApplyOrganizerView(APIView):
         if profile is None:
             profile = serializer.save(user=request.user)
             logger.info("Organizer application submitted by %s", request.user.email)
-            return Response(OrganizerProfileSerializer(profile).data, status=status.HTTP_201_CREATED)
+            return Response(OrganizerProfileSerializer(profile, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
         if profile.status == OrganizerProfile.Status.REJECTED:
             logger.info("Organizer application re-submitted by %s", request.user.email)
@@ -218,7 +218,7 @@ class ApplyOrganizerView(APIView):
             reviewed_at=None,
             reviewed_by=None,
         )
-        return Response(OrganizerProfileSerializer(profile).data)
+        return Response(OrganizerProfileSerializer(profile, context={"request": request}).data)
 
 
 class OrganizerSettingsView(generics.RetrieveUpdateAPIView):

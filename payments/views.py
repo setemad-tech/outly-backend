@@ -27,7 +27,7 @@ from bookings.models import Booking
 from bookings.serializers import TicketSerializer
 from bookings.services import create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
-from . import services
+from . import crypto, services
 
 logger = logging.getLogger(__name__)
 
@@ -147,3 +147,50 @@ class StripeWebhookView(APIView):
         # as separate elif branches — the pattern doesn't change.
 
         return Response(status=status.HTTP_200_OK)
+
+class PaymentMethodsView(APIView):
+    """
+    GET /api/payments/methods/ — which ways to pay are switched on, so the
+    checkout UI can show crypto as "coming soon" until Binance Pay is set up.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response([
+            {"id": "card", "label": "Card", "enabled": True},
+            {"id": "crypto", "label": "Crypto (Binance Pay)", "enabled": crypto.is_configured()},
+        ])
+
+
+class CreateCryptoCheckoutView(APIView):
+    """
+    POST /api/bookings/<event_id>/crypto-checkout/
+    Not live yet — answers 503 until payments/crypto.py is finished and
+    configured. Kept as a real endpoint so the frontend flow is already wired.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, event_id):
+        if not crypto.is_configured():
+            return Response(
+                {"detail": "Crypto payments aren't available yet — please pay by card."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            booking = create_pending_booking(
+                user=request.user, event_id=event_id, quantity=request.data.get("quantity", 1)
+            )
+        except SoldOutError as e:
+            return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)
+        except ValidationError as e:
+            return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            url = crypto.create_crypto_checkout(
+                booking=booking,
+                success_url=request.data.get("success_url", ""),
+                cancel_url=request.data.get("cancel_url", ""),
+            )
+        except crypto.CryptoPaymentsUnavailable as e:
+            booking.delete()
+            return Response({"detail": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"checkout_url": url}, status=status.HTTP_201_CREATED)

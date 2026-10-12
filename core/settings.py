@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "bookings",
     "payments",
     "chat",
+    "backoffice",
     "corsheaders",
 
     # allauth
@@ -87,6 +88,7 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "https://outly.ae",
     "https://www.outly.ae",
+    "https://admin.outly.ae",  # admin portal — same frontend, served on the admin subdomain
     "https://outly-frontend.pages.dev",
     "http://localhost:5173",
     "http://localhost:8080",
@@ -260,6 +262,12 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://outly.ae")
 # ---------------------------------------------------------------------
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+# Crypto payments via Binance Pay (merchant account not set up yet). Crypto
+# stays hidden as "coming soon" in the app until both are set — see
+# payments/crypto.py for what's still needed to switch it on.
+BINANCE_PAY_API_KEY = os.getenv("BINANCE_PAY_API_KEY", "")
+BINANCE_PAY_SECRET_KEY = os.getenv("BINANCE_PAY_SECRET_KEY", "")
 
 PLATFORM_COMMISSION_PERCENT = int(os.environ.get("PLATFORM_COMMISSION_PERCENT", 0))
 

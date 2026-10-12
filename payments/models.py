@@ -14,6 +14,7 @@ from django.db import models
 class Payment(models.Model):
     class Provider(models.TextChoices):
         STRIPE = "stripe", "Stripe"
+        BINANCE_PAY = "binance_pay", "Binance Pay (crypto)"
         MANUAL = "manual", "Manual / cash"
 
     booking = models.OneToOneField(

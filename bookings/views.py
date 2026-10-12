@@ -25,6 +25,7 @@ from .services import create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from events.models import Event
 from accounts.models import approved_organizer
+from backoffice import analytics
 
 
 
@@ -306,13 +307,10 @@ class CheckInView(APIView):
 
 class OrganizerAnalyticsView(APIView):
     """
-    GET /api/me/organizer/analytics/
+    GET /api/me/organizer/analytics/?range=7|30|90|365|all
 
-    Kept deliberately simple, per your call: revenue over time (daily
-    totals from confirmed/attended bookings) and attendance vs. capacity
-    per event. No date-range filtering or per-event drilldown yet — this
-    is the "both, kept simple" version; add query params later if you
-    need to slice by event or time window.
+    Summary numbers, daily sales and per-event attendance for the signed-in
+    organizer's own events — see backoffice/analytics.py.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -321,36 +319,8 @@ class OrganizerAnalyticsView(APIView):
         if profile is None:
             return Response({"detail": "Your organizer account hasn't been approved yet."}, status=403)
 
-        paid_statuses = [Booking.Status.CONFIRMED, Booking.Status.ATTENDED]
-
-        # Revenue over time — daily totals, oldest first. price_paid_minor
-        # is the snapshot taken at booking time (see Booking model), not a
-        # live price lookup, so this stays accurate even if an event's
-        # price changes after some tickets already sold.
-        revenue_rows = (
-            Booking.objects.filter(event__organizer=profile, status__in=paid_statuses)
-            .annotate(day=TruncDate("booked_at"))
-            .values("day")
-            .annotate(revenue_minor=Sum("price_paid_minor"))
-            .order_by("day")
-        )
-
-        # Attendance vs. capacity per event, upcoming-first.
-        attendance_rows = (
-            Event.objects.filter(organizer=profile)
-            .annotate(
-                attending=Coalesce(  # people, not bookings — a group of 5 is 5
-                    Sum("bookings__quantity", filter=Q(bookings__status__in=paid_statuses)), 0
-                )
-            )
-            .values("id", "title", "capacity", "attending")
-            .order_by("start_at")
-        )
-
-        return Response({
-            "revenue_over_time": list(revenue_rows),
-            "attendance_by_event": list(attendance_rows),
-        })
+        key, start, end = analytics.parse_range(request)
+        return Response({"range": key, **analytics.organizer_analytics(profile, start, end)})
 
 
 class TicketQRImageView(APIView):

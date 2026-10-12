@@ -64,6 +64,14 @@ class User(AbstractUser):
     preferred_language = models.CharField(max_length=10, default="en")
     city = models.CharField(max_length=80, blank=True)  # "Dubai" today
 
+    class Gender(models.TextChoices):
+        MALE = "male", "Male"
+        FEMALE = "female", "Female"
+
+    # Required at signup (RegisterSerializer). Blank only for accounts that
+    # existed before the field was added.
+    gender = models.CharField(max_length=6, choices=Gender.choices, blank=True)
+
     # False for every account, including ones that existed before this
     # field was added — QR tickets go out by email, so an unconfirmed
     # address (typo'd at signup) must never be trusted just because the
@@ -105,6 +113,8 @@ class OrganizerProfile(models.Model):
     )
     display_name = models.CharField(max_length=80)
     bio = models.TextField(blank=True)
+    # Shown next to the organizer's name on their events. Square works best.
+    logo = models.ImageField(upload_to="organizers/logos/", blank=True, null=True)
 
     # --- Application details (what the reviewer checks) -------------------
     city = models.CharField(max_length=80, blank=True)

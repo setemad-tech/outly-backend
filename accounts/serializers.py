@@ -27,7 +27,7 @@ class OrganizerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrganizerProfile
         fields = [
-            "display_name", "bio", "city", "instagram", "website", "event_types",
+            "display_name", "bio", "logo", "city", "instagram", "website", "event_types",
             "status", "review_note", "is_verified", "rating", "events_hosted",
             "created_at",
         ]
@@ -61,23 +61,28 @@ class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "name", "email", "phone_number", "city",
-            "preferred_language", "organizer", "email_verified",
+            "id", "name", "email", "phone_number", "city", "gender",
+            "preferred_language", "organizer", "email_verified", "is_staff",
         ]
-        read_only_fields = ["id", "email_verified"]
+        read_only_fields = ["id", "email_verified", "is_staff"]
 
     def get_organizer(self, user):
         profile = getattr(user, "organizer_profile", None)
-        return OrganizerProfileSerializer(profile).data if profile else None
+        # context -> absolute logo URL (the frontend is on another origin)
+        return OrganizerProfileSerializer(profile, context=self.context).data if profile else None
 
 
 class RegisterSerializer(serializers.ModelSerializer):
     name = serializers.CharField(write_only=True)
     password = serializers.CharField(write_only=True, validators=[validate_password])
+    gender = serializers.ChoiceField(
+        choices=User.Gender.choices,
+        error_messages={"required": "Please select male or female.", "invalid_choice": "Please select male or female."},
+    )
 
     class Meta:
         model = User
-        fields = ["name", "email", "password"]
+        fields = ["name", "email", "password", "gender"]
 
     def validate_email(self, value):
         if User.objects.filter(email__iexact=value).exists():
@@ -91,6 +96,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             email=validated_data["email"],
             first_name=first_name,
             last_name=last_name,
+            gender=validated_data["gender"],
         )
         user.set_password(validated_data["password"])
         user.save()
@@ -131,7 +137,7 @@ class OrganizerSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrganizerProfile
         fields = [
-            "display_name", "bio", "city", "instagram", "website",
+            "display_name", "bio", "logo", "city", "instagram", "website",
             "status", "is_verified", "rating",
             "events_hosted", "stripe_onboarding_complete",
         ]

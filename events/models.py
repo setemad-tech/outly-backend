@@ -18,6 +18,11 @@ from django.db import models
 # countdown was previously faking with a hardcoded per-event map.
 CHAT_GRACE_MINUTES = 120
 
+# A finished event drops off the public map and Events list this long after
+# it ends (or starts, when it has no end time) — long enough for late-night
+# events to stay findable while they're still running.
+EVENT_LISTED_FOR_HOURS_AFTER = 8
+
 
 class Category(models.Model):
     """Nightlife, Gaming, Networking, Sports... shown as filter chips."""
@@ -32,7 +37,21 @@ class Category(models.Model):
         return self.name
 
 
+class EventQuerySet(models.QuerySet):
+    def still_listed(self, now=None):
+        """Events that haven't finished yet (see EVENT_LISTED_FOR_HOURS_AFTER)."""
+        from django.utils import timezone
+
+        cutoff = (now or timezone.now()) - timedelta(hours=EVENT_LISTED_FOR_HOURS_AFTER)
+        return self.filter(
+            models.Q(end_at__gte=cutoff)
+            | models.Q(end_at__isnull=True, start_at__gte=cutoff)
+        )
+
+
 class Event(models.Model):
+    objects = EventQuerySet.as_manager()
+
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         PUBLISHED = "published", "Published"
