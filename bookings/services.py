@@ -10,6 +10,9 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 
 from events.models import Event
+from events.pricing import (
+    FILS_PER_POINT, loyalty_points, redeemable_points, service_fee_minor, ticket_price_minor,
+)
 from .models import Booking
 
 
@@ -23,7 +26,7 @@ class SoldOutError(ValidationError):
 
 
 @transaction.atomic
-def create_pending_booking(*, user, event_id: str, quantity=1) -> Booking:
+def create_pending_booking(*, user, event_id: str, quantity=1, use_points=False) -> Booking:
     """
     Creates a PENDING booking, holding `quantity` spots, iff capacity allows.
 
@@ -72,18 +75,45 @@ def create_pending_booking(*, user, event_id: str, quantity=1) -> Booking:
         # surface that instead of silently no-op'ing
         raise ValidationError("You already have a booking for this event.")
 
-    return Booking.objects.create(
+    total_minor = ticket_price_minor(event.price_minor) * quantity
+    points = 0
+    if use_points and total_minor > 0:
+        # Lock the user's row so two checkouts at once can't spend the same
+        # points twice; the balance is read under that lock.
+        from django.contrib.auth import get_user_model
+        from loyalty.services import balance
+        get_user_model().objects.select_for_update().filter(pk=user.pk).first()
+        points = redeemable_points(total_minor, balance(user))
+
+    booking = Booking.objects.create(
         event=event,
         user=user,
         quantity=quantity,
         status=Booking.Status.PENDING,
-        price_paid_minor=event.price_minor * quantity,
+        price_paid_minor=max(0, total_minor - points * FILS_PER_POINT),
+        service_fee_minor=service_fee_minor(event.price_minor) * quantity,
+        loyalty_points=loyalty_points(event.price_minor) * quantity,
+        points_redeemed=points,
     )
+    if points:
+        from loyalty.services import redeem_for_booking
+        redeem_for_booking(booking)
+    return booking
 
 
 @transaction.atomic
 def cancel_pending_booking(booking: Booking):
-    """Used when a checkout session expires or a payment fails."""
+    """Used when a checkout session expires or a payment fails. Returns any points spent on it."""
     if booking.status == Booking.Status.PENDING:
         booking.status = Booking.Status.CANCELLED
         booking.save(update_fields=["status"])
+        from loyalty.services import return_redeemed
+        return_redeemed(booking)
+
+
+@transaction.atomic
+def discard_pending_booking(booking: Booking):
+    """Removes a hold whose checkout could never start, giving back any points spent on it."""
+    from loyalty.services import return_redeemed
+    return_redeemed(booking)
+    booking.delete()

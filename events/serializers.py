@@ -1,6 +1,7 @@
 from django.utils.text import slugify
 from rest_framework import serializers
 from .models import Category, Event, EventPerk
+from .pricing import SERVICE_FEE_PERCENT, loyalty_points, ticket_price_minor
 
 
 class EventPerkSerializer(serializers.ModelSerializer):
@@ -17,6 +18,10 @@ class EventSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     spots_left = serializers.IntegerField(read_only=True)
     chat_closes_at = serializers.DateTimeField(read_only=True)
+    # price_minor is the organizer's price; attendees see and pay this one.
+    ticket_price_minor = serializers.SerializerMethodField()
+    service_fee_percent = serializers.SerializerMethodField()
+    loyalty_points = serializers.SerializerMethodField()
     min_age = serializers.IntegerField(
         required=False, allow_null=True, min_value=1, max_value=99
     )
@@ -32,12 +37,22 @@ class EventSerializer(serializers.ModelSerializer):
         fields = [
             "id", "title", "slug", "description", "cover_image",
             "venue_name", "city", "latitude", "longitude",
-            "start_at", "end_at", "price_minor", "currency",
+            "start_at", "end_at", "price_minor", "ticket_price_minor", "service_fee_percent",
+            "loyalty_points", "currency",
             "capacity", "spots_left", "min_age", "entry_restrictions", "language", "status",
             "category", "category_name", "category_label", "organizer", "organizer_name", "organizer_logo", "organizer_verified", "perks",
             "chat_closes_at",
         ]
         read_only_fields = ["id", "organizer", "spots_left"]
+
+    def get_ticket_price_minor(self, event):
+        return ticket_price_minor(event.price_minor)
+
+    def get_service_fee_percent(self, event):
+        return SERVICE_FEE_PERCENT
+
+    def get_loyalty_points(self, event):
+        return loyalty_points(event.price_minor)
 
     def _apply_category_label(self, validated_data):
         if "category_label" not in validated_data:

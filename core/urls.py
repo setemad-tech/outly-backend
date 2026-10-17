@@ -22,6 +22,7 @@ urlpatterns = [
     path("api/", include("payments.urls")),
     path("api/", include("chat.urls")),
     path("api/", include("backoffice.urls")),
+    path("api/", include("loyalty.urls")),
 ]
 
 if not settings.USE_R2:

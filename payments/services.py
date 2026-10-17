@@ -63,22 +63,7 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
         integration_identifier="hosted_web_0002",
         origin_context="web",
         # ---------------------------------------------------------------
-        line_items=[{
-            "price_data": {
-                "currency": booking.event.currency.lower(),
-                "unit_amount": booking.event.price_minor,
-                "product_data": {
-                    "name": booking.event.title,
-                    # Entry requirements on the payment page too (T&C §5.5).
-                    **(
-                        {"description": f"Entry: {booking.event.entry_requirements_display}"}
-                        if booking.event.entry_requirements_display
-                        else {}
-                    ),
-                },
-            },
-            "quantity": booking.quantity,
-        }],
+        line_items=[_line_item(booking)],
         success_url=success_url,
         cancel_url=cancel_url,
         customer_email=booking.user.email,
@@ -104,8 +89,10 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
                 "checkout is unavailable until they do."
             )
 
-        total_amount = booking.event.price_minor * booking.quantity
-        application_fee = round(total_amount * PLATFORM_COMMISSION_PERCENT / 100)
+        organizer_total = booking.price_paid_minor - booking.service_fee_minor
+        application_fee = booking.service_fee_minor + round(
+            organizer_total * PLATFORM_COMMISSION_PERCENT / 100
+        )
 
         session_kwargs["payment_intent_data"] = {
             "application_fee_amount": application_fee,
@@ -125,6 +112,57 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
         },
     )
     return session
+
+
+def _line_item(booking: Booking) -> dict:
+    """
+    The booking's snapshot price (organizer price + service fee), so Stripe
+    charges exactly what the app showed. Normally one line per ticket; with
+    loyalty points applied it's a single line for the discounted total.
+    """
+    event = booking.event
+    details = []
+    if booking.points_redeemed:
+        details.append(f"{booking.points_redeemed} loyalty points applied")
+    if event.entry_requirements_display:
+        details.append(f"Entry: {event.entry_requirements_display}")  # T&C §5.5
+    if booking.points_redeemed:
+        name = event.title if booking.quantity == 1 else f"{event.title} × {booking.quantity} tickets"
+        unit_amount, quantity = booking.price_paid_minor, 1
+    else:
+        name, unit_amount, quantity = event.title, booking.price_paid_minor // booking.quantity, booking.quantity
+    return {
+        "price_data": {
+            "currency": event.currency.lower(),
+            "unit_amount": unit_amount,
+            "product_data": {"name": name, **({"description": " · ".join(details)} if details else {})},
+        },
+        "quantity": quantity,
+    }
+
+
+def confirm_booking(booking: Booking):
+    """
+    Marks a booking paid-for: CONFIRMED, loyalty points awarded, ticket
+    emailed. Used by Stripe confirmation and by orders loyalty points
+    covered in full.
+    """
+    booking.status = Booking.Status.CONFIRMED
+    booking.save(update_fields=["status"])
+
+    from loyalty.services import award_for_booking
+    award_for_booking(booking)
+
+    # Best-effort — the booking is already confirmed and that's the part
+    # that matters. A Brevo hiccup shouldn't make Stripe think this webhook
+    # failed (Stripe retries failed webhooks, which would re-run this
+    # whole function — harmless here since it's idempotent, but pointless
+    # if the actual cause was just the email provider being down).
+    try:
+        from bookings.emails import send_ticket_email
+        send_ticket_email(booking)
+    except Exception:
+        logger.exception("Failed to send ticket email for booking %s", booking.id)
 
 
 def verify_and_parse_webhook(payload: bytes, sig_header: str):
@@ -163,24 +201,11 @@ def handle_checkout_completed(session: dict):
         logger.warning("Checkout completed unpaid for booking %s", booking.id)
         return
 
-    booking.status = Booking.Status.CONFIRMED
-    booking.save(update_fields=["status"])
-
     Payment.objects.filter(booking=booking).update(
         provider_reference=session["payment_intent"],
         paid_at=timezone_now(),
     )
-
-    # Best-effort — the booking is already confirmed and that's the part
-    # that matters. A Brevo hiccup shouldn't make Stripe think this webhook
-    # failed (Stripe retries failed webhooks, which would re-run this
-    # whole function — harmless here since it's idempotent, but pointless
-    # if the actual cause was just the email provider being down).
-    try:
-        from bookings.emails import send_ticket_email
-        send_ticket_email(booking)
-    except Exception:
-        logger.exception("Failed to send ticket email for booking %s", booking.id)
+    confirm_booking(booking)
 
 
 @transaction.atomic

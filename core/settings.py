@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "payments",
     "chat",
     "backoffice",
+    "loyalty",
     "corsheaders",
 
     # allauth

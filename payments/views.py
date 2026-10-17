@@ -25,7 +25,7 @@ from rest_framework import status
 
 from bookings.models import Booking
 from bookings.serializers import TicketSerializer
-from bookings.services import create_pending_booking, SoldOutError
+from bookings.services import create_pending_booking, discard_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from . import crypto, services
 
@@ -53,12 +53,18 @@ class CreateCheckoutSessionView(APIView):
 
         try:
             booking = create_pending_booking(
-                user=request.user, event_id=event_id, quantity=quantity
+                user=request.user, event_id=event_id, quantity=quantity,
+                use_points=bool(request.data.get("use_points")),
             )
         except SoldOutError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)
         except ValidationError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+
+        if booking.price_paid_minor == 0:
+            # Loyalty points covered the whole order — nothing to charge.
+            services.confirm_booking(booking)
+            return Response({"ticket": TicketSerializer(booking).data}, status=status.HTTP_201_CREATED)
 
         raw_success_url = request.data.get(
             "success_url", "https://outly.app/tickets/pending"
@@ -83,7 +89,7 @@ class CreateCheckoutSessionView(APIView):
             # organizer hasn't finished Stripe Connect onboarding yet.
             # Release the spot we just held — don't leave a PENDING
             # booking sitting around for a checkout that can never happen.
-            booking.delete()
+            discard_pending_booking(booking)
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
         except stripe.error.StripeError as e:
             # A genuine Stripe API failure — bad/placeholder API key,
@@ -92,7 +98,7 @@ class CreateCheckoutSessionView(APIView):
             # problem surfaced as an opaque 500 instead of a message that
             # actually explains what went wrong. Also release the held
             # spot, same as the ValidationError case above.
-            booking.delete()
+            discard_pending_booking(booking)
             message = getattr(e, "user_message", None) or str(e)
             return Response({"detail": f"Payment setup failed: {message}"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -178,12 +184,16 @@ class CreateCryptoCheckoutView(APIView):
             )
         try:
             booking = create_pending_booking(
-                user=request.user, event_id=event_id, quantity=request.data.get("quantity", 1)
+                user=request.user, event_id=event_id, quantity=request.data.get("quantity", 1),
+                use_points=bool(request.data.get("use_points")),
             )
         except SoldOutError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)
         except ValidationError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        if booking.price_paid_minor == 0:
+            services.confirm_booking(booking)  # points covered it all
+            return Response({"ticket": TicketSerializer(booking).data}, status=status.HTTP_201_CREATED)
         try:
             url = crypto.create_crypto_checkout(
                 booking=booking,
@@ -191,6 +201,6 @@ class CreateCryptoCheckoutView(APIView):
                 cancel_url=request.data.get("cancel_url", ""),
             )
         except crypto.CryptoPaymentsUnavailable as e:
-            booking.delete()
+            discard_pending_booking(booking)
             return Response({"detail": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"checkout_url": url}, status=status.HTTP_201_CREATED)

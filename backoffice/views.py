@@ -268,6 +268,28 @@ class UserDetailView(StaffOnly, APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class UserLoyaltyView(StaffOnly, APIView):
+    """POST {points, note} — add (positive) or remove (negative) loyalty points."""
+
+    def post(self, request, pk):
+        from loyalty.services import adjust
+
+        user = get_object_or_404(User, pk=pk)
+        try:
+            points = int(request.data.get("points"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Points must be a whole number."}, status=400)
+        note = str(request.data.get("note") or "").strip()
+        if not note:
+            return Response({"detail": "Add a short reason — the user sees it in their points history."}, status=400)
+        try:
+            adjust(user=user, points=points, note=note, by=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        log_action(request.user, "user.loyalty_adjusted", "user", user.pk, user.email, points=points, note=note)
+        return Response(AdminUserDetailSerializer(_users_with_stats().get(pk=pk)).data)
+
+
 # ---------- Bookings ----------
 
 class BookingListView(StaffOnly, generics.ListAPIView):

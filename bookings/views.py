@@ -21,7 +21,7 @@ from .qr import generate_qr_png
 from .serializers import TicketSerializer
 
 logger = logging.getLogger(__name__)
-from .services import create_pending_booking, SoldOutError
+from .services import cancel_pending_booking, create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from events.models import Event
 from accounts.models import approved_organizer
@@ -113,9 +113,18 @@ class BookingDetailView(generics.RetrieveDestroyAPIView):
     def get_queryset(self):
         return Booking.objects.filter(user=self.request.user).select_related("event")
 
+    @transaction.atomic
     def perform_destroy(self, booking):
+        if booking.status == Booking.Status.PENDING:
+            cancel_pending_booking(booking)  # unpaid: any points spent on it come back
+            return
         booking.status = Booking.Status.CANCELLED
         booking.save(update_fields=["status"])
+        # Points are for tickets kept, so a cancelled booking gives back what
+        # it earned. Points spent on it aren't returned — like the money,
+        # paid tickets are non-refundable.
+        from loyalty.services import reverse_for_booking
+        reverse_for_booking(booking)
 
 
 class ParticipantSerializer(serializers.ModelSerializer):

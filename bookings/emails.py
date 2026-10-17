@@ -40,6 +40,21 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
     )
     admits_text = f"Admits {booking.quantity} people\n" if extra else ""
 
+    used = booking.points_redeemed
+    used_html = (
+        f'<p style="margin: -14px 0 20px; font-size: 13px; color: #666;">{used} loyalty points used ({used} AED off)</p>'
+        if used else ""
+    )
+    used_text = f"Loyalty points used: {used} ({used} AED off)\n" if used else ""
+
+    points = booking.loyalty_points
+    points_label = f"{points} loyalty point{'' if points == 1 else 's'}"
+    points_html = (
+        f'<p style="margin: 0 0 20px; font-size: 14px;">You earned <strong>{points_label}</strong></p>'
+        if points else ""
+    )
+    points_text = f"You earned {points_label}\n" if points else ""
+
     requirements = event.entry_requirements_display
     requirements_html = (
         f'<p style="margin: 0 0 20px; font-size: 14px;">Entry requirements: '
@@ -57,6 +72,8 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
       <p style="margin: 0 0 20px; font-size: 14px;">
         Payment confirmed: <strong>{amount_display}</strong>
       </p>
+      {used_html}
+      {points_html}
       {requirements_html}
       <img src="{qr_url}" alt="Your ticket QR code" width="220" height="220" style="display:block;" />
       <p style="margin: 16px 0 0; font-size: 14px; font-weight: 600;">Ticket for</p>
@@ -72,6 +89,8 @@ def build_ticket_email_content(booking: Booking) -> tuple[str, str, str]:
         f"Your ticket for {event.title}\n"
         f"{event.venue_name} — {when_display}\n"
         f"Payment confirmed: {amount_display}\n"
+        f"{used_text}"
+        f"{points_text}"
         f"{requirements_text}"
         f"Ticket for: {holder_display}\n"
         f"{admits_text}"

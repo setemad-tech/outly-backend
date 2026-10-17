@@ -64,9 +64,21 @@ class AdminUserDetailSerializer(AdminUserSerializer):
     organizer_name = serializers.CharField(source="organizer_profile.display_name", read_only=True, default=None)
     organizer_events = serializers.SerializerMethodField()
     bookings_total = serializers.SerializerMethodField()
+    loyalty_points = serializers.SerializerMethodField()
+    loyalty_entries = serializers.SerializerMethodField()
 
     class Meta(AdminUserSerializer.Meta):
-        fields = AdminUserSerializer.Meta.fields + ["organizer_name", "organizer_events", "bookings_total"]
+        fields = AdminUserSerializer.Meta.fields + [
+            "organizer_name", "organizer_events", "bookings_total", "loyalty_points", "loyalty_entries",
+        ]
+
+    def get_loyalty_points(self, user):
+        from loyalty.services import balance
+        return balance(user)
+
+    def get_loyalty_entries(self, user):
+        from loyalty.serializers import LoyaltyEntrySerializer
+        return LoyaltyEntrySerializer(user.loyalty_entries.select_related("booking")[:20], many=True).data
 
     def get_organizer_events(self, user):
         profile = getattr(user, "organizer_profile", None)
@@ -106,7 +118,8 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = [
-            "id", "status", "quantity", "checked_in_count", "price_paid_minor", "currency",
+            "id", "status", "quantity", "checked_in_count", "price_paid_minor", "service_fee_minor",
+            "loyalty_points", "points_redeemed", "currency",
             "booked_at", "checked_in_at", "user_email", "user_name", "event_id", "event_title",
             "event_start_at", "payment_provider",
         ]

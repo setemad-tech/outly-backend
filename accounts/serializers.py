@@ -57,14 +57,19 @@ class ProfileSerializer(serializers.ModelSerializer):
     # first_name/last_name itself
     name = serializers.CharField(source="get_full_name", read_only=True)
     organizer = serializers.SerializerMethodField()
+    loyalty_points = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             "id", "name", "email", "phone_number", "city", "gender",
-            "preferred_language", "organizer", "email_verified", "is_staff",
+            "preferred_language", "organizer", "email_verified", "is_staff", "loyalty_points",
         ]
         read_only_fields = ["id", "email_verified", "is_staff"]
+
+    def get_loyalty_points(self, user):
+        from loyalty.services import balance
+        return balance(user)
 
     def get_organizer(self, user):
         profile = getattr(user, "organizer_profile", None)

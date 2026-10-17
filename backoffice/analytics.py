@@ -7,25 +7,43 @@ Numbers behind both analytics dashboards:
 
 Money is always in minor units (fils). "Sold" means CONFIRMED or ATTENDED
 bookings; tickets are counted in people (Booking.quantity), not bookings.
+
+Attendees pay the organizer's price plus OUTLY's service fee
+(events/pricing.py). Company numbers use what attendees paid; organizer
+numbers use only the organizer's share (paid minus service fee).
 """
 
 from datetime import date, timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 
 from accounts.models import OrganizerProfile
 from bookings.models import Booking
 from events.models import Event
+from events.pricing import FILS_PER_POINT, SERVICE_FEE_PERCENT
 
 User = get_user_model()
 
 SOLD = [Booking.Status.CONFIRMED, Booking.Status.ATTENDED]
 RANGES = {"7": 7, "30": 30, "90": 90, "365": 365}
 DEFAULT_RANGE = "30"
+
+
+def _organizer_share(prefix=""):
+    """
+    The organizer's part of a booking: the full ticket value (cash paid plus
+    points redeemed — OUTLY absorbs points, not the organizer) minus the
+    service fee. prefix e.g. "bookings__" when summing from Event.
+    """
+    return (
+        F(f"{prefix}price_paid_minor")
+        + F(f"{prefix}points_redeemed") * FILS_PER_POINT
+        - F(f"{prefix}service_fee_minor")
+    )
 
 
 def commission_percent() -> int:
@@ -79,6 +97,10 @@ def _series_start(start, end, *querysets_with_field):
 def _sales(bookings):
     agg = bookings.filter(status__in=SOLD).aggregate(
         revenue=Coalesce(Sum("price_paid_minor"), 0),
+        organizer_revenue=Coalesce(Sum(_organizer_share()), 0),
+        service_fees=Coalesce(Sum("service_fee_minor"), 0),
+        loyalty_points=Coalesce(Sum("loyalty_points"), 0),
+        points_redeemed=Coalesce(Sum("points_redeemed"), 0),
         tickets=Coalesce(Sum("quantity"), 0),
         orders=Count("id"),
         paid_orders=Count("id", filter=Q(price_paid_minor__gt=0)),
@@ -101,7 +123,7 @@ def organizer_analytics(profile: OrganizerProfile, start, end):
         bookings.filter(status__in=SOLD, booked_at__date__gte=series_start, booked_at__date__lte=end)
         .annotate(day=TruncDate("booked_at"))
         .values("day")
-        .annotate(revenue_minor=Sum("price_paid_minor"), tickets=Sum("quantity"))
+        .annotate(revenue_minor=Sum(_organizer_share()), tickets=Sum("quantity"))
     )
 
     now = timezone.now()
@@ -110,7 +132,7 @@ def organizer_analytics(profile: OrganizerProfile, start, end):
         .annotate(
             attending=Coalesce(Sum("bookings__quantity", filter=Q(bookings__status__in=SOLD)), 0),
             checked_in=Coalesce(Sum("bookings__checked_in_count", filter=Q(bookings__status__in=SOLD)), 0),
-            revenue_minor=Coalesce(Sum("bookings__price_paid_minor", filter=Q(bookings__status__in=SOLD)), 0),
+            revenue_minor=Coalesce(Sum(_organizer_share("bookings__"), filter=Q(bookings__status__in=SOLD)), 0),
         )
         .order_by("-start_at")
     )
@@ -135,11 +157,12 @@ def organizer_analytics(profile: OrganizerProfile, start, end):
         "currency": "AED",
         "commission_percent": fee_pct,
         "summary": {
-            "revenue_minor": sales["revenue"],
-            "net_revenue_minor": sales["revenue"] - round(sales["revenue"] * fee_pct / 100),
+            # The organizer's own prices x tickets — OUTLY's service fee is on top, not taken out.
+            "revenue_minor": sales["organizer_revenue"],
+            "net_revenue_minor": sales["organizer_revenue"] - round(sales["organizer_revenue"] * fee_pct / 100),
             "tickets_sold": sales["tickets"],
             "orders": sales["orders"],
-            "avg_order_minor": round(sales["revenue"] / sales["paid_orders"]) if sales["paid_orders"] else 0,
+            "avg_order_minor": round(sales["organizer_revenue"] / sales["paid_orders"]) if sales["paid_orders"] else 0,
             "events_total": len(event_rows),
             "events_upcoming": len(event_rows) - len(past),
             # Of everyone who held a ticket to an event that has started, how many showed up.
@@ -245,9 +268,14 @@ def company_overview(start, end):
     return {
         "currency": "AED",
         "commission_percent": fee_pct,
+        "service_fee_percent": SERVICE_FEE_PERCENT,
         "summary": {
             **kpis,
-            "platform_fees_minor": round(sales["revenue"] * fee_pct / 100),
+            # Service fees, plus any commission on the organizer's share.
+            "platform_fees_minor": sales["service_fees"] + round(sales["organizer_revenue"] * fee_pct / 100),
+            "loyalty_points_issued": sales["loyalty_points"],
+            # Discounts OUTLY gave at checkout (1 point = 1 AED); GMV is cash only.
+            "loyalty_points_redeemed": sales["points_redeemed"],
             "avg_order_minor": round(sales["revenue"] / sales["paid_orders"]) if sales["paid_orders"] else 0,
             "paid_orders": sales["paid_orders"],
             "users_total": users_total,

@@ -30,7 +30,12 @@ class Booking(models.Model):
     )
     quantity = models.PositiveSmallIntegerField(default=1)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
-    price_paid_minor = models.PositiveIntegerField(default=0)  # snapshot at booking time
+    # Snapshots at booking time (events/pricing.py), so later price or
+    # percentage changes never rewrite history:
+    price_paid_minor = models.PositiveIntegerField(default=0)   # what the attendee paid, fee included
+    service_fee_minor = models.PositiveIntegerField(default=0)  # OUTLY's part of that; the rest is the organizer's
+    loyalty_points = models.PositiveIntegerField(default=0)     # points this booking earns once paid
+    points_redeemed = models.PositiveIntegerField(default=0)    # points spent on it (1 point = 1 AED off price_paid_minor)
     booked_at = models.DateTimeField(auto_now_add=True)
     checked_in_at = models.DateTimeField(blank=True, null=True)  # first person through the door
     # One QR covers the whole booking: a group of `quantity` people can come

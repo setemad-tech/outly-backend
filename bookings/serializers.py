@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 from .services import create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from events.models import Event
+from events.pricing import ticket_price_minor
 
 
 # ---------------------------------------------------------------------------
@@ -32,9 +33,13 @@ class TicketEventSerializer(serializers.Serializer):
     start_at = serializers.DateTimeField()
     cover_image = serializers.ImageField(allow_null=True)
     price_minor = serializers.IntegerField()
+    ticket_price_minor = serializers.SerializerMethodField()
     currency = serializers.CharField()
     min_age = serializers.IntegerField(allow_null=True)
     entry_restrictions = serializers.CharField()
+
+    def get_ticket_price_minor(self, event):
+        return ticket_price_minor(event.price_minor)
 
 
 class TicketSerializer(serializers.ModelSerializer):
@@ -43,7 +48,10 @@ class TicketSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ["id", "event", "status", "quantity", "checked_in_count", "booked_at", "qr_payload"]
+        fields = [
+            "id", "event", "status", "quantity", "checked_in_count", "booked_at", "qr_payload",
+            "price_paid_minor", "loyalty_points", "points_redeemed",
+        ]
 
     def get_qr_payload(self, booking):
         """

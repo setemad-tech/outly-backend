@@ -10,6 +10,7 @@ urlpatterns = [
     path("admin/events/<uuid:pk>/", views.EventDetailView.as_view()),
     path("admin/users/", views.UserListView.as_view()),
     path("admin/users/<int:pk>/", views.UserDetailView.as_view()),
+    path("admin/users/<int:pk>/loyalty/", views.UserLoyaltyView.as_view()),
     path("admin/bookings/", views.BookingListView.as_view()),
     path("admin/activity/", views.ActivityListView.as_view()),
 ]
