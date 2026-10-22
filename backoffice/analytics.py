@@ -9,8 +9,9 @@ Money is always in minor units (fils). "Sold" means CONFIRMED or ATTENDED
 bookings; tickets are counted in people (Booking.quantity), not bookings.
 
 Attendees pay the organizer's price plus OUTLY's service fee
-(events/pricing.py). Company numbers use what attendees paid; organizer
-numbers use only the organizer's share (paid minus service fee).
+(events/pricing.py). "Ticket sales" everywhere — organizer and admin — is
+the ticket value without that fee (organizer_share). The admin overview
+reports the fee, and the cash actually collected, separately.
 """
 
 from datetime import date, timedelta
@@ -33,7 +34,7 @@ RANGES = {"7": 7, "30": 30, "90": 90, "365": 365}
 DEFAULT_RANGE = "30"
 
 
-def _organizer_share(prefix=""):
+def organizer_share(prefix=""):
     """
     The organizer's part of a booking: the full ticket value (cash paid plus
     points redeemed — OUTLY absorbs points, not the organizer) minus the
@@ -97,7 +98,7 @@ def _series_start(start, end, *querysets_with_field):
 def _sales(bookings):
     agg = bookings.filter(status__in=SOLD).aggregate(
         revenue=Coalesce(Sum("price_paid_minor"), 0),
-        organizer_revenue=Coalesce(Sum(_organizer_share()), 0),
+        organizer_revenue=Coalesce(Sum(organizer_share()), 0),
         service_fees=Coalesce(Sum("service_fee_minor"), 0),
         loyalty_points=Coalesce(Sum("loyalty_points"), 0),
         points_redeemed=Coalesce(Sum("points_redeemed"), 0),
@@ -123,7 +124,7 @@ def organizer_analytics(profile: OrganizerProfile, start, end):
         bookings.filter(status__in=SOLD, booked_at__date__gte=series_start, booked_at__date__lte=end)
         .annotate(day=TruncDate("booked_at"))
         .values("day")
-        .annotate(revenue_minor=Sum(_organizer_share()), tickets=Sum("quantity"))
+        .annotate(revenue_minor=Sum(organizer_share()), tickets=Sum("quantity"))
     )
 
     now = timezone.now()
@@ -132,7 +133,7 @@ def organizer_analytics(profile: OrganizerProfile, start, end):
         .annotate(
             attending=Coalesce(Sum("bookings__quantity", filter=Q(bookings__status__in=SOLD)), 0),
             checked_in=Coalesce(Sum("bookings__checked_in_count", filter=Q(bookings__status__in=SOLD)), 0),
-            revenue_minor=Coalesce(Sum(_organizer_share("bookings__"), filter=Q(bookings__status__in=SOLD)), 0),
+            revenue_minor=Coalesce(Sum(organizer_share("bookings__"), filter=Q(bookings__status__in=SOLD)), 0),
         )
         .order_by("-start_at")
     )
@@ -183,7 +184,8 @@ def _period_kpis(start, end):
     bookings = Booking.objects.filter(_in_range("booked_at", start, end))
     sales = _sales(bookings)
     return {
-        "gmv_minor": sales["revenue"],
+        # Ticket value without the service fee (see module docstring).
+        "gmv_minor": sales["organizer_revenue"],
         "tickets_sold": sales["tickets"],
         "orders": sales["orders"],
         "new_users": User.objects.filter(_in_range("date_joined", start, end)).count(),
@@ -229,7 +231,7 @@ def company_overview(start, end):
         Booking.objects.filter(status__in=SOLD, booked_at__date__gte=series_start, booked_at__date__lte=end)
         .annotate(day=TruncDate("booked_at"))
         .values("day")
-        .annotate(revenue_minor=Sum("price_paid_minor"), tickets=Sum("quantity"))
+        .annotate(revenue_minor=Sum(organizer_share()), tickets=Sum("quantity"))
     )
     signup_rows = (
         User.objects.filter(date_joined__date__gte=series_start, date_joined__date__lte=end)
@@ -246,21 +248,21 @@ def company_overview(start, end):
     top_events = (
         sold.values("event_id", "event__title", "event__start_at", "event__capacity",
                     "event__organizer__display_name")
-        .annotate(tickets=Sum("quantity"), revenue_minor=Sum("price_paid_minor"))
+        .annotate(tickets=Sum("quantity"), revenue_minor=Sum(organizer_share()))
         .order_by("-revenue_minor", "-tickets")[:5]
     )
     top_organizers = (
         sold.values("event__organizer_id", "event__organizer__display_name", "event__organizer__status")
         .annotate(
             tickets=Sum("quantity"),
-            revenue_minor=Sum("price_paid_minor"),
+            revenue_minor=Sum(organizer_share()),
             events=Count("event", distinct=True),
         )
         .order_by("-revenue_minor", "-tickets")[:5]
     )
     categories = (
         sold.values("event__category__name")
-        .annotate(tickets=Sum("quantity"), revenue_minor=Sum("price_paid_minor"))
+        .annotate(tickets=Sum("quantity"), revenue_minor=Sum(organizer_share()))
         .order_by("-tickets")
     )
     gender = sold.values("user__gender").annotate(people=Count("user", distinct=True))
@@ -274,9 +276,11 @@ def company_overview(start, end):
             # Service fees, plus any commission on the organizer's share.
             "platform_fees_minor": sales["service_fees"] + round(sales["organizer_revenue"] * fee_pct / 100),
             "loyalty_points_issued": sales["loyalty_points"],
-            # Discounts OUTLY gave at checkout (1 point = 1 AED); GMV is cash only.
+            # Discounts OUTLY gave at checkout (1 point = 1 AED).
             "loyalty_points_redeemed": sales["points_redeemed"],
-            "avg_order_minor": round(sales["revenue"] / sales["paid_orders"]) if sales["paid_orders"] else 0,
+            # What attendees actually paid: ticket sales + service fees - points redeemed.
+            "collected_minor": sales["revenue"],
+            "avg_order_minor": round(sales["organizer_revenue"] / sales["paid_orders"]) if sales["paid_orders"] else 0,
             "paid_orders": sales["paid_orders"],
             "users_total": users_total,
             "email_verified_pct": _pct(User.objects.filter(email_verified=True).count(), users_total),

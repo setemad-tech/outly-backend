@@ -116,7 +116,10 @@ class OrganizerReviewView(StaffOnly, APIView):
 def _events_with_sales():
     return Event.objects.select_related("organizer", "category").annotate(
         tickets_sold=Coalesce(Sum("bookings__quantity", filter=Q(bookings__status__in=SOLD)), 0),
-        revenue_minor=Coalesce(Sum("bookings__price_paid_minor", filter=Q(bookings__status__in=SOLD)), 0),
+        # Ticket value without the service fee, like the overview's ticket sales.
+        revenue_minor=Coalesce(
+            Sum(analytics.organizer_share("bookings__"), filter=Q(bookings__status__in=SOLD)), 0
+        ),
     )
 
 
