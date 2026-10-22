@@ -132,6 +132,16 @@ class ChangePasswordSerializer(serializers.Serializer):
         return value
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    code = serializers.RegexField(r"^\d{6}$", error_messages={"invalid": "Enter the 6-digit code."})
+    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+
+
 class OrganizerSettingsSerializer(serializers.ModelSerializer):
     # Same reasoning as OrganizerProfileSerializer — without this, `rating`
     # arrives in the frontend as a string ("0.00") instead of a number,

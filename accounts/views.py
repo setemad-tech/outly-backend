@@ -20,6 +20,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import OrganizerProfile, approved_organizer
 from .otp import OTP_RESEND_COOLDOWN_SECONDS, OtpError, generate_and_send_otp, verify_otp
+from .password_reset import request_reset, reset_password
 from .serializers import (
     ProfileSerializer,
     OrganizerProfileSerializer,
@@ -28,6 +29,8 @@ from .serializers import (
     ChangeEmailSerializer,
     ChangePasswordSerializer,
     OrganizerSettingsSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,6 +123,43 @@ class ChangePasswordView(APIView):
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data["new_password"])
         request.user.save(update_fields=["password"])
+        return Response({"detail": "Password updated."})
+
+
+class PasswordResetRequestView(APIView):
+    """
+    POST /api/auth/password/reset/ — body: {"email": "..."}
+    Emails a reset code if the account exists. Always answers the same way,
+    so it can't be used to find out who has an account.
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request_reset(serializer.validated_data["email"])
+        return Response(
+            {"detail": "If that email has an OUTLY account, we've sent it a reset code."}
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    POST /api/auth/password/reset/confirm/ — body: {email, code, new_password}
+    The frontend signs in with the new password afterwards.
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            reset_password(data["email"], data["code"], data["new_password"])
+        except OtpError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"detail": "Password updated."})
 
 

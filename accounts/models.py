@@ -196,3 +196,20 @@ class EmailOTP(models.Model):
 
     def __str__(self):
         return f"OTP for {self.user.email}"
+
+class PasswordResetCode(models.Model):
+    """
+    One active "forgot password" code per user (accounts/password_reset.py).
+    Separate from EmailOTP so asking for a reset never overwrites a signup
+    verification code, or the other way round. Hashed like EmailOTP.
+    """
+    user = models.OneToOneField(
+        "accounts.User", on_delete=models.CASCADE, related_name="password_reset_code"
+    )
+    code_hash = models.CharField(max_length=128)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    sent_at = models.DateTimeField()  # set on every send, for the resend cooldown
+    expires_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"Password reset for {self.user.email}"

@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.utils import timezone
 
 from .emails import send_organizer_review_email
-from .models import EmailOTP, OrganizerProfile, User
+from .models import EmailOTP, OrganizerProfile, PasswordResetCode, User
 
 
 @admin.register(User)
@@ -95,5 +95,12 @@ class EmailOTPAdmin(admin.ModelAdmin):
     # code_hash is never shown — it's a password hash, not something to
     # display even in admin.
     list_display = ("user", "attempts", "created_at", "expires_at")
+    readonly_fields = ("code_hash",)
+    search_fields = ("user__email",)
+
+
+@admin.register(PasswordResetCode)
+class PasswordResetCodeAdmin(admin.ModelAdmin):
+    list_display = ("user", "attempts", "sent_at", "expires_at")
     readonly_fields = ("code_hash",)
     search_fields = ("user__email",)
