@@ -111,6 +111,32 @@ class OrganizerReviewView(StaffOnly, APIView):
         return Response(AdminOrganizerSerializer(profile).data)
 
 
+class OrganizerFeeView(StaffOnly, APIView):
+    """
+    PATCH {service_fee_percent}: OUTLY's service charge on this organizer's
+    tickets. Applies to their events straight away for new orders; orders
+    already placed keep what they were charged.
+    """
+
+    def patch(self, request, pk):
+        profile = get_object_or_404(OrganizerProfile.objects.select_related("user"), pk=pk)
+        raw = request.data.get("service_fee_percent")
+        try:
+            pct = int(str(raw).strip())
+        except (TypeError, ValueError):
+            pct = None
+        if pct is None or str(raw).strip() != str(pct) or not 0 <= pct <= 100:
+            return Response({"service_fee_percent": ["Enter a whole number from 0 to 100."]}, status=400)
+        old = profile.service_fee_percent
+        if pct != old:
+            profile.service_fee_percent = pct
+            profile.save(update_fields=["service_fee_percent"])
+            log_action(request.user, "organizer.service_fee", "organizer", profile.pk,
+                       profile.display_name, note=f"{old}% -> {pct}%")
+        profile.events_count = profile.events.count()
+        return Response(AdminOrganizerSerializer(profile).data)
+
+
 # ---------- Events ----------
 
 def _events_with_sales():
@@ -300,7 +326,11 @@ class BookingListView(StaffOnly, generics.ListAPIView):
     pagination_class = Page
 
     def get_queryset(self):
-        qs = Booking.objects.select_related("user", "event", "payment").order_by("-booked_at")
+        qs = (
+            Booking.objects.select_related("user", "event", "payment")
+            .prefetch_related("items")
+            .order_by("-booked_at")
+        )
         status_ = self.request.query_params.get("status")
         if status_ in Booking.Status.values:
             qs = qs.filter(status=status_)
@@ -319,3 +349,26 @@ class ActivityListView(StaffOnly, generics.ListAPIView):
     serializer_class = AdminActionSerializer
     pagination_class = Page
     queryset = AdminAction.objects.select_related("actor")
+
+
+class BookingTicketEmailView(StaffOnly, APIView):
+    """
+    GET /api/admin/bookings/<id>/ticket-email/ — the ticket email exactly as
+    the buyer gets it (QR inlined so it renders anywhere). Nothing is sent.
+    """
+
+    def get(self, request, pk):
+        import base64
+
+        from django.core import signing
+
+        from bookings.emails import build_ticket_email_content
+        from bookings.qr import generate_qr_png
+
+        booking = get_object_or_404(
+            Booking.objects.select_related("event", "user").prefetch_related("items"), pk=pk
+        )
+        png = generate_qr_png(signing.dumps(str(booking.id)))
+        qr_src = "data:image/png;base64," + base64.b64encode(png).decode()
+        subject, text, html = build_ticket_email_content(booking, qr_src=qr_src)
+        return Response({"subject": subject, "text": text, "html": html, "to": booking.user.email})

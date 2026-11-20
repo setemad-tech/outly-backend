@@ -10,7 +10,7 @@ from rest_framework import serializers, generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
-from .models import Booking
+from .models import Booking, BookingItem
 from .emails import send_ticket_email
 from .qr import generate_qr_png
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from .services import create_pending_booking, SoldOutError
 from django.core.exceptions import ValidationError
 from events.models import Event
-from events.pricing import ticket_price_minor
+from events.pricing import fee_percent_for, ticket_price_minor
 
 
 # ---------------------------------------------------------------------------
@@ -39,18 +39,29 @@ class TicketEventSerializer(serializers.Serializer):
     entry_restrictions = serializers.CharField()
 
     def get_ticket_price_minor(self, event):
-        return ticket_price_minor(event.price_minor)
+        return ticket_price_minor(event.price_minor, fee_percent_for(event))
+
+
+class BookingItemSerializer(serializers.ModelSerializer):
+    """One line of an order, as sold (snapshot)."""
+    guests = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = BookingItem
+        fields = ["name", "description", "quantity", "guests_per_unit", "guests", "unit_price_minor", "discount_minor"]
 
 
 class TicketSerializer(serializers.ModelSerializer):
     event = TicketEventSerializer(read_only=True)
+    items = BookingItemSerializer(many=True, read_only=True)
     qr_payload = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             "id", "event", "status", "quantity", "checked_in_count", "booked_at", "qr_payload",
-            "price_paid_minor", "loyalty_points", "points_redeemed",
+            "price_paid_minor", "loyalty_points", "points_redeemed", "items",
+            "promo_code_text", "discount_minor",
         ]
 
     def get_qr_payload(self, booking):

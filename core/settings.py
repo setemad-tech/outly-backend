@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "chat",
     "backoffice",
     "loyalty",
+    "promos",
     "corsheaders",
 
     # allauth
@@ -134,8 +135,11 @@ ASGI_APPLICATION = "core.asgi.application"
 # Database
 # ---------------------------------------------------------------------
 # Render auto-injects a single DATABASE_URL when you link a Postgres
-# instance — falls back to your existing separate DB_* vars if
-# DATABASE_URL isn't set, so local dev needs ZERO changes.
+# instance — falls back to separate DB_* vars if DATABASE_URL isn't set.
+# Neither set while DEBUG is on (a plain local checkout): a local SQLite
+# file, so `manage.py migrate/runserver` work without Postgres and never
+# touch production. Production runs with DEBUG off, so a missing database
+# setting there still fails loudly instead of silently using an empty file.
 _database_url = os.environ.get("DATABASE_URL")
 
 if _database_url:
@@ -143,6 +147,13 @@ if _database_url:
         "default": dj_database_url.parse(
             _database_url, conn_max_age=600, ssl_require=not DEBUG
         )
+    }
+elif DEBUG and not os.getenv("DB_NAME"):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
 else:
     DATABASES = {

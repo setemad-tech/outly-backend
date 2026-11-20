@@ -7,6 +7,7 @@ point back to accounts.User, never the other way around.
 """
 
 from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.core.validators import MaxValueValidator
 from django.db import models
 
 import uuid
@@ -63,6 +64,15 @@ class User(AbstractUser):
     avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
     preferred_language = models.CharField(max_length=10, default="en")
     city = models.CharField(max_length=80, blank=True)  # "Dubai" today
+
+    # Light or dark site theme, saved so it follows the account across
+    # devices (the OUTLY purple accent is always on). Blank = never chosen:
+    # the browser's own choice applies and is saved here the first time.
+    class Appearance(models.TextChoices):
+        LIGHT = "light", "Light"
+        DARK = "dark", "Dark"
+
+    appearance = models.CharField(max_length=5, choices=Appearance.choices, blank=True)
 
     class Gender(models.TextChoices):
         MALE = "male", "Male"
@@ -134,6 +144,15 @@ class OrganizerProfile(models.Model):
     reviewed_by = models.ForeignKey(
         "accounts.User", on_delete=models.SET_NULL, blank=True, null=True,
         related_name="+",
+    )
+
+    # OUTLY's service charge on this organizer's tickets, set by admin in the
+    # Organizers tab. Attendees pay the organizer's price plus this percent
+    # (events/pricing.py). Changing it re-prices future orders only — orders
+    # already placed keep the fee they were charged.
+    service_fee_percent = models.PositiveSmallIntegerField(
+        default=15, validators=[MaxValueValidator(100)],
+        help_text="Service charge added on top of this organizer's ticket prices, in percent.",
     )
 
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)

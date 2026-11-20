@@ -4,10 +4,15 @@ events/views.py
 Just the viewset — EventSerializer lives in events/serializers.py, not here.
 """
 
-from django.db.models import Q
+from datetime import timedelta
+
+from django.conf import settings
+from django.db.models import Prefetch, Q, Sum
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 from rest_framework import viewsets, permissions
 
-from .models import Event
+from .models import Event, TicketType
 from .serializers import EventSerializer
 from .permissions import IsOrganizer, IsEventOwnerOrReadOnly
 
@@ -29,7 +34,9 @@ class EventViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        base = Event.objects.select_related("organizer", "category").prefetch_related("perks")
+        base = Event.objects.select_related("organizer", "category").prefetch_related(
+            "perks", Prefetch("ticket_types", queryset=ticket_types_with_sold())
+        )
 
         if self.request.query_params.get("mine") == "true":
             if not user.is_authenticated or not hasattr(user, "organizer_profile"):
@@ -37,6 +44,10 @@ class EventViewSet(viewsets.ModelViewSet):
             return base.filter(organizer=user.organizer_profile)
 
         visible = Q(status=Event.Status.PUBLISHED)
+        if self.action == "retrieve":
+            # A shared link to a cancelled/finished event should say so,
+            # not 404. Drafts stay private.
+            visible |= Q(status__in=[Event.Status.CANCELLED, Event.Status.COMPLETED])
         if user.is_authenticated and hasattr(user, "organizer_profile"):
             visible |= Q(organizer=user.organizer_profile)  # see my own drafts too
 
@@ -46,3 +57,19 @@ class EventViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             qs = qs.still_listed()
         return qs
+
+
+def ticket_types_with_sold():
+    """Ticket types with `sold` = units held by live bookings, in one query."""
+    from bookings.models import Booking
+
+    hold_cutoff = timezone.now() - timedelta(minutes=settings.CHECKOUT_HOLD_MINUTES)
+    live = Q(items__booking__status__in=[Booking.Status.CONFIRMED, Booking.Status.ATTENDED]) | Q(
+        items__booking__status=Booking.Status.PENDING, items__booking__booked_at__gte=hold_cutoff
+    )
+    # Explicit order_by: Django drops Meta.ordering from aggregate queries.
+    return (
+        TicketType.objects.select_related("event")
+        .annotate(sold=Coalesce(Sum("items__quantity", filter=live), 0))
+        .order_by("position", "created_at")
+    )

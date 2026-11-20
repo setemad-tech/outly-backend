@@ -25,6 +25,7 @@ class AdminOrganizerSerializer(serializers.ModelSerializer):
             "id", "display_name", "logo", "bio", "city", "instagram", "website", "event_types",
             "status", "is_verified", "review_note", "reviewed_at", "reviewed_by", "created_at",
             "email", "user_name", "user_id", "stripe_onboarding_complete", "events_count",
+            "service_fee_percent",
         ]
 
 
@@ -66,11 +67,22 @@ class AdminUserDetailSerializer(AdminUserSerializer):
     bookings_total = serializers.SerializerMethodField()
     loyalty_points = serializers.SerializerMethodField()
     loyalty_entries = serializers.SerializerMethodField()
+    loyalty_level = serializers.SerializerMethodField()
+    events_attended = serializers.SerializerMethodField()
 
     class Meta(AdminUserSerializer.Meta):
         fields = AdminUserSerializer.Meta.fields + [
             "organizer_name", "organizer_events", "bookings_total", "loyalty_points", "loyalty_entries",
+            "loyalty_level", "events_attended",
         ]
+
+    def get_events_attended(self, user):
+        from loyalty.levels import events_attended
+        return events_attended(user)
+
+    def get_loyalty_level(self, user):
+        from loyalty.levels import level_for
+        return level_for(self.get_events_attended(user))
 
     def get_loyalty_points(self, user):
         from loyalty.services import balance
@@ -78,7 +90,7 @@ class AdminUserDetailSerializer(AdminUserSerializer):
 
     def get_loyalty_entries(self, user):
         from loyalty.serializers import LoyaltyEntrySerializer
-        return LoyaltyEntrySerializer(user.loyalty_entries.select_related("booking")[:20], many=True).data
+        return LoyaltyEntrySerializer(user.loyalty_entries.select_related("booking__event")[:20], many=True).data
 
     def get_organizer_events(self, user):
         profile = getattr(user, "organizer_profile", None)
@@ -114,12 +126,13 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     event_start_at = serializers.DateTimeField(source="event.start_at", read_only=True)
     currency = serializers.CharField(source="event.currency", read_only=True)
     payment_provider = serializers.SerializerMethodField()
+    tickets = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             "id", "status", "quantity", "checked_in_count", "price_paid_minor", "service_fee_minor",
-            "loyalty_points", "points_redeemed", "currency",
+            "loyalty_points", "points_redeemed", "currency", "tickets", "promo_code_text", "discount_minor",
             "booked_at", "checked_in_at", "user_email", "user_name", "event_id", "event_title",
             "event_start_at", "payment_provider",
         ]
@@ -127,6 +140,13 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     def get_payment_provider(self, booking):
         payment = getattr(booking, "payment", None)
         return payment.provider if payment else None
+
+    def get_tickets(self, booking):
+        """["1 × Table for 6 · 6 guests", "2 × VIP"]"""
+        return [
+            f"{i.quantity} × {i.name}" + (f" · {i.guests} guests" if i.guests_per_unit > 1 else "")
+            for i in booking.items.all()
+        ]
 
 
 class AdminActionSerializer(serializers.ModelSerializer):

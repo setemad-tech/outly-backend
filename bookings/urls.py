@@ -7,6 +7,7 @@ from .views import (
     ParticipantsListView,
     OrganizerAnalyticsView,
     TicketQRImageView,
+    OrderQuoteView,
 )
 
 urlpatterns = [
@@ -19,5 +20,6 @@ urlpatterns = [
     path("bookings/<uuid:pk>/qr.png/", TicketQRImageView.as_view()),
     path("bookings/<uuid:pk>/", BookingDetailView.as_view()),
     path("events/<uuid:event_id>/participants/", ParticipantsListView.as_view()),
+    path("events/<uuid:event_id>/quote/", OrderQuoteView.as_view()),
     path("me/organizer/analytics/", OrganizerAnalyticsView.as_view()),
 ]

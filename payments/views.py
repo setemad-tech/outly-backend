@@ -53,8 +53,10 @@ class CreateCheckoutSessionView(APIView):
 
         try:
             booking = create_pending_booking(
-                user=request.user, event_id=event_id, quantity=quantity,
+                user=request.user, event_id=event_id,
+                items=request.data.get("items"), quantity=quantity,
                 use_points=bool(request.data.get("use_points")),
+                promo_code=request.data.get("promo_code") or "",
             )
         except SoldOutError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)
@@ -62,7 +64,8 @@ class CreateCheckoutSessionView(APIView):
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
         if booking.price_paid_minor == 0:
-            # Loyalty points covered the whole order — nothing to charge.
+            # Points and/or a promo code covered the whole order — nothing to
+            # charge, so it's confirmed here without a payment (BU-09).
             services.confirm_booking(booking)
             return Response({"ticket": TicketSerializer(booking).data}, status=status.HTTP_201_CREATED)
 
@@ -184,8 +187,10 @@ class CreateCryptoCheckoutView(APIView):
             )
         try:
             booking = create_pending_booking(
-                user=request.user, event_id=event_id, quantity=request.data.get("quantity", 1),
+                user=request.user, event_id=event_id,
+                items=request.data.get("items"), quantity=request.data.get("quantity", 1),
                 use_points=bool(request.data.get("use_points")),
+                promo_code=request.data.get("promo_code") or "",
             )
         except SoldOutError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_409_CONFLICT)

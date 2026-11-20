@@ -63,10 +63,13 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
         integration_identifier="hosted_web_0002",
         origin_context="web",
         # ---------------------------------------------------------------
-        line_items=[_line_item(booking)],
+        line_items=_line_items(booking),
         success_url=success_url,
         cancel_url=cancel_url,
         customer_email=booking.user.email,
+        # Stripe's own checkout page in the language the site was in (the
+        # account's preferred_language, set by the frontend's language switch).
+        locale="ru" if booking.user.preferred_language == "ru" else "en",
         # Stripe's minimum lifetime, not the spot hold — see
         # CHECKOUT_HOLD_MINUTES / release_stale_holds for the 5-minute hold.
         expires_at=int(
@@ -114,31 +117,54 @@ def create_checkout_session(*, booking: Booking, success_url: str, cancel_url: s
     return session
 
 
-def _line_item(booking: Booking) -> dict:
+def _line_items(booking: Booking) -> list:
     """
-    The booking's snapshot price (organizer price + service fee), so Stripe
-    charges exactly what the app showed. Normally one line per ticket; with
-    loyalty points applied it's a single line for the discounted total.
+    What Stripe shows and charges: one line per ticket type at the booking's
+    snapshot price, so it matches the app's itemised total exactly. With a
+    promo code or points it's a single line for the reduced total, with the
+    breakdown in its description.
     """
     event = booking.event
-    details = []
+    items = list(booking.items.all())
+    currency = event.currency.lower()
+    entry = f"Entry: {event.entry_requirements_display}" if event.entry_requirements_display else ""  # T&C §5.5
+
+    def describe(item):
+        guests = f" (admits {item.guests})" if item.guests_per_unit > 1 else ""
+        return f"{item.quantity} × {item.name}{guests}"
+
+    if not booking.points_redeemed and not booking.discount_minor and items:
+        lines = []
+        for item in items:
+            details = [d for d in [f"admits {item.guests_per_unit} per ticket" if item.guests_per_unit > 1 else "", entry] if d]
+            lines.append({
+                "price_data": {
+                    "currency": currency,
+                    "unit_amount": item.unit_price_minor,
+                    "product_data": {
+                        "name": f"{event.title} — {item.name}",
+                        **({"description": " · ".join(details)} if details else {}),
+                    },
+                },
+                "quantity": item.quantity,
+            })
+        return lines
+
+    details = [", ".join(describe(i) for i in items)]
+    if booking.discount_minor:
+        details.append(f"promo {booking.promo_code_text} −{booking.discount_minor // 100} AED")
     if booking.points_redeemed:
         details.append(f"{booking.points_redeemed} loyalty points applied")
-    if event.entry_requirements_display:
-        details.append(f"Entry: {event.entry_requirements_display}")  # T&C §5.5
-    if booking.points_redeemed:
-        name = event.title if booking.quantity == 1 else f"{event.title} × {booking.quantity} tickets"
-        unit_amount, quantity = booking.price_paid_minor, 1
-    else:
-        name, unit_amount, quantity = event.title, booking.price_paid_minor // booking.quantity, booking.quantity
-    return {
+    if entry:
+        details.append(entry)
+    return [{
         "price_data": {
-            "currency": event.currency.lower(),
-            "unit_amount": unit_amount,
-            "product_data": {"name": name, **({"description": " · ".join(details)} if details else {})},
+            "currency": currency,
+            "unit_amount": booking.price_paid_minor,
+            "product_data": {"name": event.title, "description": " · ".join(d for d in details if d)},
         },
-        "quantity": quantity,
-    }
+        "quantity": 1,
+    }]
 
 
 def confirm_booking(booking: Booking):

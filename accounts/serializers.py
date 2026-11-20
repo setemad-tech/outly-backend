@@ -29,8 +29,9 @@ class OrganizerProfileSerializer(serializers.ModelSerializer):
         fields = [
             "display_name", "bio", "logo", "city", "instagram", "website", "event_types",
             "status", "review_note", "is_verified", "rating", "events_hosted",
-            "created_at",
+            "service_fee_percent", "created_at",
         ]
+        read_only_fields = ["service_fee_percent"]
 
 
 class OrganizerApplicationSerializer(serializers.ModelSerializer):
@@ -63,7 +64,8 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "name", "email", "phone_number", "city", "gender",
-            "preferred_language", "organizer", "email_verified", "is_staff", "loyalty_points",
+            "preferred_language", "appearance",
+            "organizer", "email_verified", "is_staff", "loyalty_points",
         ]
         read_only_fields = ["id", "email_verified", "is_staff"]
 

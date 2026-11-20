@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from .models import Booking
 from .emails import send_ticket_email
 from .qr import generate_qr_png
-from .serializers import TicketSerializer
+from .serializers import BookingItemSerializer, TicketSerializer
 
 logger = logging.getLogger(__name__)
 from .services import cancel_pending_booking, create_pending_booking, SoldOutError
@@ -41,6 +41,7 @@ class MyTicketsListView(generics.ListAPIView):
                 status__in=[Booking.Status.CONFIRMED, Booking.Status.ATTENDED],
             )
             .select_related("event")
+            .prefetch_related("items")
             .order_by("-booked_at")
         )
 
@@ -61,6 +62,7 @@ class CreateFreeBookingView(APIView):
             booking = create_pending_booking(
                 user=request.user,
                 event_id=event_id,
+                items=request.data.get("items"),
                 quantity=request.data.get("quantity", 1),
             )
         except SoldOutError as e:
@@ -68,10 +70,10 @@ class CreateFreeBookingView(APIView):
         except ValidationError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
-        if booking.event.price_minor > 0:
-            booking.delete()  # undo the hold — this endpoint isn't for paid events
+        if booking.items.filter(unit_price_minor__gt=0).exists():
+            booking.delete()  # undo the hold — this endpoint isn't for paid tickets
             return Response(
-                {"detail": "This event isn't free. Use the checkout endpoint."},
+                {"detail": "These tickets aren't free. Use the checkout endpoint."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -130,12 +132,13 @@ class BookingDetailView(generics.RetrieveDestroyAPIView):
 class ParticipantSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="user.get_full_name", read_only=True)
     email = serializers.EmailField(source="user.email", read_only=True)
+    items = BookingItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = Booking
         fields = [
             "id", "name", "email", "status", "quantity", "checked_in_count",
-            "booked_at", "checked_in_at",
+            "booked_at", "checked_in_at", "items",
         ]
 
 
@@ -167,6 +170,7 @@ class ParticipantsListView(generics.ListAPIView):
                 status__in=[Booking.Status.CONFIRMED, Booking.Status.ATTENDED],
             )
             .select_related("user")
+            .prefetch_related("items")
             .order_by("-booked_at")
         )
 
@@ -241,6 +245,11 @@ class CheckInView(APIView):
             )
 
         attendee = booking.user.get_full_name() or booking.user.email
+        # What they bought, for the door: "2 × VIP, 1 × Table for 6 (6 guests)".
+        tickets = ", ".join(
+            f"{i.quantity} × {i.name}" + (f" ({i.guests} guests)" if i.guests_per_unit > 1 else "")
+            for i in booking.items.all()
+        )
         remaining = booking.quantity - booking.checked_in_count
 
         if booking.status not in (Booking.Status.CONFIRMED, Booking.Status.ATTENDED):
@@ -259,6 +268,7 @@ class CheckInView(APIView):
                     "detail": detail,
                     "checked_in_at": booking.checked_in_at,
                     "attendee": attendee,
+                    "tickets": tickets,
                     "quantity": booking.quantity,
                     "checked_in_count": booking.checked_in_count,
                 },
@@ -277,6 +287,7 @@ class CheckInView(APIView):
                             "If no options appear, reload the scanner page."
                         ),
                         "attendee": attendee,
+                    "tickets": tickets,
                         "event": booking.event.title,
                         "quantity": booking.quantity,
                         "checked_in_count": booking.checked_in_count,
@@ -304,6 +315,7 @@ class CheckInView(APIView):
             {
                 "detail": "Checked in.",
                 "attendee": attendee,
+                    "tickets": tickets,
                 "event": booking.event.title,
                 "checked_in_at": booking.checked_in_at,
                 "admitted": admit,
@@ -361,3 +373,39 @@ class TicketQRImageView(APIView):
         response = HttpResponse(png_bytes, content_type="image/png")
         response["Cache-Control"] = "public, max-age=86400"  # deterministic output — safe to cache
         return response
+
+
+class OrderQuoteView(APIView):
+    """
+    POST /api/events/<event_id>/quote/
+    body: {"items": [{"ticket_type": id, "quantity": n}], "promo_code": "",
+           "use_points": bool}
+
+    The itemised total the checkout panel shows, worked out by the same
+    code that charges it (bookings/quote.py). Signed-out visitors get a
+    quote too (no points, no per-person promo limit). A promo code that
+    doesn't apply comes back as promo_error alongside the normal total;
+    tickets that can't be sold come back as 400/409 with `detail`.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, event_id):
+        from .quote import QuoteError, SoldOutError as QuoteSoldOut, build_quote
+
+        event = Event.objects.filter(pk=event_id).first()
+        if event is None:
+            return Response({"detail": "Event not found."}, status=404)
+        user = request.user if request.user.is_authenticated else None
+        try:
+            quote = build_quote(
+                event=event,
+                items=request.data.get("items"),
+                user=user,
+                use_points=bool(request.data.get("use_points")),
+                promo_code=request.data.get("promo_code") or "",
+            )
+        except QuoteSoldOut as e:
+            return Response({"detail": e.messages[0]}, status=409)
+        except QuoteError as e:
+            return Response({"detail": e.messages[0]}, status=400)
+        return Response(quote.as_dict())

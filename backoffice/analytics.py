@@ -38,11 +38,15 @@ def organizer_share(prefix=""):
     """
     The organizer's part of a booking: the full ticket value (cash paid plus
     points redeemed — OUTLY absorbs points, not the organizer) minus the
-    service fee. prefix e.g. "bookings__" when summing from Event.
+    service fee. An OUTLY-funded promo discount is added back, since OUTLY
+    pays for it; an organizer's own promo comes out of their share (and its
+    service fee shrinks in proportion — promos/services.py).
+    prefix e.g. "bookings__" when summing from Event.
     """
     return (
         F(f"{prefix}price_paid_minor")
         + F(f"{prefix}points_redeemed") * FILS_PER_POINT
+        + F(f"{prefix}outly_discount_minor")
         - F(f"{prefix}service_fee_minor")
     )
 
@@ -102,6 +106,8 @@ def _sales(bookings):
         service_fees=Coalesce(Sum("service_fee_minor"), 0),
         loyalty_points=Coalesce(Sum("loyalty_points"), 0),
         points_redeemed=Coalesce(Sum("points_redeemed"), 0),
+        discounts=Coalesce(Sum("discount_minor"), 0),
+        outly_discounts=Coalesce(Sum("outly_discount_minor"), 0),
         tickets=Coalesce(Sum("quantity"), 0),
         orders=Count("id"),
         paid_orders=Count("id", filter=Q(price_paid_minor__gt=0)),
@@ -204,7 +210,7 @@ def company_overview(start, end):
         previous = _period_kpis(start - timedelta(days=length), start - timedelta(days=1))
 
     # Checkout conversion on paid events: started checkouts that ended up paid.
-    paid_event_bookings = bookings.filter(event__price_minor__gt=0)
+    paid_event_bookings = bookings.filter(items__unit_price_minor__gt=0).distinct()
     started = paid_event_bookings.count()
     completed = paid_event_bookings.filter(status__in=SOLD).count()
 
