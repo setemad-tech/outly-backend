@@ -8,6 +8,7 @@ from .views import (
     OrganizerAnalyticsView,
     TicketQRImageView,
     OrderQuoteView,
+    TicketViewView,
 )
 
 urlpatterns = [
@@ -17,6 +18,7 @@ urlpatterns = [
     # non-UUID strings, so ordering isn't currently load-bearing, but it's
     # cheap insurance against that changing later.
     path("bookings/checkin/", CheckInView.as_view()),
+    path("bookings/view/<str:token>/", TicketViewView.as_view()),
     path("bookings/<uuid:pk>/qr.png/", TicketQRImageView.as_view()),
     path("bookings/<uuid:pk>/", BookingDetailView.as_view()),
     path("events/<uuid:event_id>/participants/", ParticipantsListView.as_view()),

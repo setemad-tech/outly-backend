@@ -66,8 +66,9 @@ class ProfileSerializer(serializers.ModelSerializer):
             "id", "name", "email", "phone_number", "city", "gender",
             "preferred_language", "appearance",
             "organizer", "email_verified", "is_staff", "loyalty_points",
+            "is_guest", "guest_session_ends_at",
         ]
-        read_only_fields = ["id", "email_verified", "is_staff"]
+        read_only_fields = ["id", "email_verified", "is_staff", "is_guest", "guest_session_ends_at"]
 
     def get_loyalty_points(self, user):
         from loyalty.services import balance
@@ -80,6 +81,9 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    # Plain field: uniqueness is checked in validate_email with a clearer
+    # message (and the guest case) than the model's default validator.
+    email = serializers.EmailField(max_length=254)
     name = serializers.CharField(write_only=True)
     password = serializers.CharField(write_only=True, validators=[validate_password])
     gender = serializers.ChoiceField(
@@ -92,7 +96,15 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ["name", "email", "password", "gender"]
 
     def validate_email(self, value):
-        if User.objects.filter(email__iexact=value).exists():
+        existing = User.objects.filter(email__iexact=value).first()
+        if existing is not None and existing.is_guest and existing.is_active:
+            # Taking over a guest's tickets needs proof of the inbox, so it
+            # happens from inside a guest session (GuestUpgradeView).
+            raise serializers.ValidationError(
+                "You've booked with this email as a guest. Open any event, continue with "
+                "your email, then choose \"Create account\" to keep your tickets."
+            )
+        if existing is not None:
             raise serializers.ValidationError("An account with this email already exists.")
         return value
 
@@ -108,6 +120,16 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.set_password(validated_data["password"])
         user.save()
         return user
+
+
+class GuestUpgradeSerializer(serializers.Serializer):
+    """A signed-in guest keeps their tickets and becomes a normal account."""
+    name = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True, validators=[validate_password])
+    gender = serializers.ChoiceField(
+        choices=User.Gender.choices,
+        error_messages={"required": "Please select male or female.", "invalid_choice": "Please select male or female."},
+    )
 
 
 class ChangeEmailSerializer(serializers.Serializer):

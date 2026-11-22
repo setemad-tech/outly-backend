@@ -89,6 +89,16 @@ class User(AbstractUser):
     # (see accounts/otp.py) before they can book.
     email_verified = models.BooleanField(default=False)
 
+    # Guest checkout (owner, 2026-11-22): someone who booked from an event
+    # link with just their email (accounts/email_login.py). A guest is
+    # signed in for GUEST_SESSION_MINUTES at a time (enforced by
+    # accounts/authentication.py), earns no points and has no level, and
+    # their details are removed 45 days after their last event
+    # (accounts/guests.py). Signing up with the same email turns the guest
+    # into a normal account, bookings included.
+    is_guest = models.BooleanField(default=False, db_index=True)
+    guest_session_ends_at = models.DateTimeField(blank=True, null=True)
+
     def save(self, *args, **kwargs):
         # AbstractUser still requires a unique username internally even
         # though we don't collect one at signup — derive a stable one from
@@ -232,3 +242,21 @@ class PasswordResetCode(models.Model):
 
     def __str__(self):
         return f"Password reset for {self.user.email}"
+
+
+class EmailLoginCode(models.Model):
+    """
+    Quick checkout from a shared event link (owner, 2026-11-22): someone
+    types their email, gets a 6-digit code, and is signed in — the account
+    is only created once the code checks out (accounts/email_login.py), so
+    typing a stranger's email never creates anything. One active code per
+    email; hashed like EmailOTP.
+    """
+    email = models.EmailField(unique=True)
+    code_hash = models.CharField(max_length=128)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    sent_at = models.DateTimeField()  # for the resend cooldown
+    expires_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"Sign-in code for {self.email}"

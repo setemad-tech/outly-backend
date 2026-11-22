@@ -57,6 +57,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "id", "name", "first_name", "last_name", "email", "gender", "city", "phone_number",
             "email_verified", "is_active", "is_staff", "is_superuser",
             "date_joined", "last_login", "organizer_status", "bookings_count", "spent_minor",
+            "is_guest",
         ]
 
 

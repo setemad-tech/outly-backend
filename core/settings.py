@@ -231,15 +231,25 @@ else:
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # JWT + the 1-hour guest session rule (accounts/authentication.py).
+        "accounts.authentication.OutlyJWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Only views that set throttle_scope are limited (per IP).
+    "DEFAULT_THROTTLE_RATES": {
+        "email_code": "10/hour",
+        "email_code_verify": "30/hour",
+    },
 }
 
 
-EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
+# Resend in production. Local testing can set EMAIL_BACKEND (e.g. Django's
+# filebased backend + EMAIL_FILE_PATH) to read codes without sending mail.
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "anymail.backends.resend.EmailBackend")
+if os.environ.get("EMAIL_FILE_PATH"):
+    EMAIL_FILE_PATH = os.environ["EMAIL_FILE_PATH"]
 
 ANYMAIL = {
     "RESEND_API_KEY": os.environ.get("RESEND_API_KEY"),

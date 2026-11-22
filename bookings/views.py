@@ -409,3 +409,22 @@ class OrderQuoteView(APIView):
         except QuoteError as e:
             return Response({"detail": e.messages[0]}, status=400)
         return Response(quote.as_dict())
+
+
+class TicketViewView(APIView):
+    """
+    GET /api/bookings/view/<token>/ — the "View your ticket online" link in
+    the ticket email (bookings/emails.py ticket_view_url). No sign-in: the
+    link is signed, and holding it is like holding the emailed QR. Made for
+    guests (quick checkout), who have no account to sign back in to.
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def get(self, request, token):
+        from .emails import booking_from_view_token
+
+        booking = booking_from_view_token(token)
+        if booking is None or booking.status not in (Booking.Status.CONFIRMED, Booking.Status.ATTENDED):
+            return Response({"detail": "This ticket link isn't valid."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TicketSerializer(booking, context={"request": request}).data)

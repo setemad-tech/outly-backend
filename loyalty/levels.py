@@ -68,6 +68,8 @@ def points_percent(level: str) -> int:
 
 
 def user_level(user) -> str:
+    if getattr(user, "is_guest", False):
+        return ""  # guests (quick checkout) have no level and earn nothing
     return level_for(events_attended(user))
 
 
@@ -81,7 +83,7 @@ def meets(user_or_level, minimum: str) -> bool:
 
 def summary(user) -> dict:
     """What the Rewards page shows: level, progress to the next one, all levels."""
-    attended = events_attended(user)
+    attended = 0 if getattr(user, "is_guest", False) else events_attended(user)
     current = level_for(attended)
     nxt = next(((k, n) for k, _, n in LEVELS if attended < n), None)
     return {

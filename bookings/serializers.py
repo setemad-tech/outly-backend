@@ -55,14 +55,19 @@ class TicketSerializer(serializers.ModelSerializer):
     event = TicketEventSerializer(read_only=True)
     items = BookingItemSerializer(many=True, read_only=True)
     qr_payload = serializers.SerializerMethodField()
+    holder = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
-            "id", "event", "status", "quantity", "checked_in_count", "booked_at", "qr_payload",
+            "id", "event", "status", "quantity", "checked_in_count", "booked_at", "qr_payload", "holder",
             "price_paid_minor", "loyalty_points", "points_redeemed", "items",
             "promo_code_text", "discount_minor",
         ]
+
+    def get_holder(self, booking):
+        """Who the ticket is for: their name, or their email (guests)."""
+        return booking.user.get_full_name() or booking.user.email
 
     def get_qr_payload(self, booking):
         """

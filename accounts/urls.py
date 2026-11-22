@@ -1,5 +1,6 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .token_refresh import OutlyTokenRefreshView
 from .views import (
     RegisterView,
     MeView,
@@ -9,6 +10,9 @@ from .views import (
     PasswordResetConfirmView,
     LogoutView,
     SendEmailOtpView,
+    EmailCodeRequestView,
+    EmailCodeVerifyView,
+    GuestUpgradeView,
     VerifyEmailOtpView,
     ApplyOrganizerView,
     OrganizerSettingsView,
@@ -17,15 +21,18 @@ from .views import (
 
 urlpatterns = [
     path("auth/login/", TokenObtainPairView.as_view()),
-    path("auth/refresh/", TokenRefreshView.as_view()),
+    path("auth/refresh/", OutlyTokenRefreshView.as_view()),
     path("auth/register/", RegisterView.as_view()),
     path("auth/logout/", LogoutView.as_view()),
     path("auth/password/change/", ChangePasswordView.as_view()),
     path("auth/password/reset/", PasswordResetRequestView.as_view()),
     path("auth/password/reset/confirm/", PasswordResetConfirmView.as_view()),
     path("auth/otp/send/", SendEmailOtpView.as_view()),
+    path("auth/email-code/", EmailCodeRequestView.as_view()),
+    path("auth/email-code/verify/", EmailCodeVerifyView.as_view()),
     path("auth/otp/verify/", VerifyEmailOtpView.as_view()),
     path("me/", MeView.as_view()),
+    path("me/upgrade/", GuestUpgradeView.as_view()),
     path("me/email/", ChangeEmailView.as_view()),
     path("me/apply-organizer/", ApplyOrganizerView.as_view()),
     path("me/organizer/", OrganizerSettingsView.as_view()),

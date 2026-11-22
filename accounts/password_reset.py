@@ -30,7 +30,7 @@ _INVALID = "Incorrect or expired code. Request a new one if it keeps failing."
 
 
 def request_reset(email: str) -> None:
-    user = User.objects.filter(email__iexact=email.strip(), is_active=True).first()
+    user = User.objects.filter(email__iexact=email.strip(), is_active=True, is_guest=False).first()
     if user is None:
         return
 
@@ -58,7 +58,7 @@ def request_reset(email: str) -> None:
 
 def reset_password(email: str, code: str, new_password: str) -> User:
     """Raises OtpError on any failure. The caller validates new_password first."""
-    user = User.objects.filter(email__iexact=email.strip(), is_active=True).first()
+    user = User.objects.filter(email__iexact=email.strip(), is_active=True, is_guest=False).first()
     reset = PasswordResetCode.objects.filter(user=user).first() if user else None
     if reset is None or reset.expires_at < timezone.now():
         raise OtpError(_INVALID)

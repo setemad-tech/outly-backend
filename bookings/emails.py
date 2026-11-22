@@ -23,6 +23,28 @@ from django.core.mail import EmailMultiAlternatives
 
 from .models import Booking
 
+_VIEW_SALT = "outly.ticket-view"
+
+
+def ticket_view_token(booking: Booking) -> str:
+    """Signed booking id for the "view your ticket" link (guests have no account to sign in to)."""
+    from django.core import signing
+    return signing.dumps(str(booking.id), salt=_VIEW_SALT)
+
+
+def booking_from_view_token(token: str):
+    """The booking a view link points at, or None if the link is bad."""
+    from django.core import signing
+    try:
+        booking_id = signing.loads(token, salt=_VIEW_SALT)
+    except signing.BadSignature:
+        return None
+    return Booking.objects.select_related("event", "user").prefetch_related("items").filter(pk=booking_id).first()
+
+
+def ticket_view_url(booking: Booking) -> str:
+    return f"{settings.FRONTEND_URL}/tickets/view/{ticket_view_token(booking)}"
+
 
 def build_ticket_email_content(booking: Booking, *, qr_src: str | None = None) -> tuple[str, str, str]:
     """
@@ -35,6 +57,7 @@ def build_ticket_email_content(booking: Booking, *, qr_src: str | None = None) -
     when_display = event.start_at.strftime("%d %b %Y, %H:%M")
 
     qr_url = f"{settings.SITE_URL}/api/bookings/{booking.id}/qr.png/"
+    view_url = ticket_view_url(booking)
     title = escape(event.title)
 
     # One QR admits the whole booking — say so, same as the in-app ticket.
@@ -122,6 +145,9 @@ def build_ticket_email_content(booking: Booking, *, qr_src: str | None = None) -
       <p style="margin: 2px 0 0; font-size: 14px; color: #666;">{escape(holder_display)}</p>
       {admits_html}
       {items_html}
+      <p style="margin: 20px 0 0;">
+        <a href="{escape(view_url)}" style="display:inline-block; background:#713fe6; color:#fff; text-decoration:none; font-weight:700; font-size:14px; padding:10px 18px; border-radius:9999px;">View your ticket online</a>
+      </p>
       <p style="color: #888; font-size: 13px; margin-top: 20px;">
         Show this QR code at the entrance.<br>
         Booking reference: {reference}
@@ -141,7 +167,8 @@ def build_ticket_email_content(booking: Booking, *, qr_src: str | None = None) -
         f"{items_text}"
         f"Booking reference: {reference}\n"
         f"QR code: {qr_url}\n"
-        "Show your QR ticket in the OUTLY app at the entrance."
+        f"View your ticket online: {view_url}\n"
+        "Show your QR ticket at the entrance."
     )
 
     subject = f"Your ticket — {event.title}"

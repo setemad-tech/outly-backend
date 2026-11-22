@@ -20,6 +20,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import OrganizerProfile, approved_organizer
 from .otp import OTP_RESEND_COOLDOWN_SECONDS, OtpError, generate_and_send_otp, verify_otp
+from .email_login import CooldownError, request_code, verify_code
 from .password_reset import request_reset, reset_password
 from .serializers import (
     ProfileSerializer,
@@ -31,6 +32,7 @@ from .serializers import (
     OrganizerSettingsSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    GuestUpgradeSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,107 @@ class PasswordResetConfirmView(APIView):
         except OtpError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"detail": "Password updated."})
+
+
+class EmailCodeRequestView(APIView):
+    """
+    POST /api/auth/email-code/ {"email"} — quick checkout from an event
+    link: emails a 6-digit sign-in code (accounts/email_login.py).
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_scope = "email_code"
+
+    def get_throttles(self):
+        from rest_framework.throttling import ScopedRateThrottle
+        return [ScopedRateThrottle()]
+
+    def post(self, request):
+        from rest_framework import serializers as drf
+
+        field = drf.EmailField()
+        try:
+            email = field.run_validation(str(request.data.get("email", "")).strip())
+        except drf.ValidationError:
+            return Response({"detail": "Enter a valid email address."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            request_code(email)
+        except CooldownError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        except Exception:
+            logger.exception("Failed to send sign-in code to %s", email)
+            return Response(
+                {"detail": "Couldn't send the code. Check the email address and try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response({"detail": "Code sent."})
+
+
+class EmailCodeVerifyView(APIView):
+    """
+    POST /api/auth/email-code/verify/ {"email", "code"}
+      -> {"access", "refresh", "created", "guest", "guest_session_ends_at"}.
+    Signs in to the existing account for that email, or as a 1-hour guest.
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_scope = "email_code_verify"
+
+    def get_throttles(self):
+        from rest_framework.throttling import ScopedRateThrottle
+        return [ScopedRateThrottle()]
+
+    def post(self, request):
+        from .authentication import tokens_for
+        from .guests import maybe_purge_guests
+
+        email = str(request.data.get("email", "")).strip()
+        code = str(request.data.get("code", "")).strip()
+        if not email or not code:
+            return Response({"detail": "Email and code are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user, created = verify_code(email, code)
+        except OtpError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
+        try:
+            maybe_purge_guests()  # once a day, see accounts/guests.py
+        except Exception:
+            logger.exception("Guest clean-up failed")
+        return Response({
+            **tokens_for(user),
+            "created": created,
+            "guest": user.is_guest,
+            "guest_session_ends_at": user.guest_session_ends_at.isoformat() if user.is_guest else None,
+        })
+
+
+class GuestUpgradeView(APIView):
+    """
+    POST /api/me/upgrade/ {name, password, gender} — a guest (quick
+    checkout, still inside their 1-hour session, so they've just proved the
+    inbox) becomes a normal OUTLY account, keeping every ticket. Returns
+    fresh tokens without the guest time limit.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .authentication import tokens_for
+
+        user = request.user
+        if not user.is_guest:
+            return Response({"detail": "You already have an account."}, status=status.HTTP_400_BAD_REQUEST)
+        ser = GuestUpgradeSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        first_name, _, last_name = ser.validated_data["name"].strip().partition(" ")
+        user.first_name, user.last_name = first_name, last_name
+        user.gender = ser.validated_data["gender"]
+        user.set_password(ser.validated_data["password"])
+        user.is_guest = False
+        user.guest_session_ends_at = None
+        user.save()
+        return Response({**tokens_for(user), "profile": ProfileSerializer(user, context={"request": request}).data})
 
 
 class SendEmailOtpView(APIView):
